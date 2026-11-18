@@ -5,6 +5,8 @@ Shader "Runeveil/Muse Surface"
         _Front ("Front artwork", 2D) = "white" {}
         _Back ("Back artwork", 2D) = "white" {}
         _RelaxedFace ("Restored artwork", 2D) = "white" {}
+        _Unpainted ("Color outside artwork", Color) = (0.0, 0.0, 0.0, 0.0)
+        _SideArtwork ("Independent side mapping", Float) = 0
         _Cleansing ("Corruption fade", Range(0, 1)) = 0
         _RelaxedFaceWeight ("Expression blend", Range(0, 1)) = 0
     }
@@ -27,6 +29,8 @@ Shader "Runeveil/Muse Surface"
             SAMPLER(sampler_RelaxedFace);
 
             CBUFFER_START(UnityPerMaterial)
+                half4 _Unpainted;
+                half _SideArtwork;
                 half _Cleansing;
                 half _RelaxedFaceWeight;
             CBUFFER_END
@@ -37,6 +41,7 @@ Shader "Runeveil/Muse Surface"
                 float3 normalOS : NORMAL;
                 float2 frontUV : TEXCOORD0;
                 float2 backUV : TEXCOORD1;
+                float2 sideUV : TEXCOORD2;
                 half4 color : COLOR;
                 UNITY_VERTEX_INPUT_INSTANCE_ID
             };
@@ -46,8 +51,9 @@ Shader "Runeveil/Muse Surface"
                 float4 positionCS : SV_POSITION;
                 float2 frontUV : TEXCOORD0;
                 float2 backUV : TEXCOORD1;
-                half3 normalWS : TEXCOORD2;
-                half backWeight : TEXCOORD3;
+                float2 sideUV : TEXCOORD2;
+                half3 normalWS : TEXCOORD3;
+                half2 artworkWeights : TEXCOORD4;
                 UNITY_VERTEX_OUTPUT_STEREO
             };
 
@@ -60,7 +66,8 @@ Shader "Runeveil/Muse Surface"
                 output.normalWS = TransformObjectToWorldNormal(input.normalOS);
                 output.frontUV = input.frontUV;
                 output.backUV = input.backUV;
-                output.backWeight = input.color.a;
+                output.sideUV = input.sideUV;
+                output.artworkWeights = input.color.ar;
                 return output;
             }
 
@@ -97,13 +104,20 @@ Shader "Runeveil/Muse Surface"
                     }
                 }
                 // Keep the contours opaque and use the transparent border only to choose the facing artwork.
-                half backWeight = input.backWeight * smoothstep(0.03h, 0.76h, back.a);
-                half frontWeight = (1.0h - input.backWeight) * smoothstep(0.03h, 0.76h, front.a);
-                half3 plum = half3(0.093h, 0.039h, 0.075h);
+                half backWeight = input.artworkWeights.x * smoothstep(0.03h, 0.76h, back.a);
+                half frontWeight = (1.0h - input.artworkWeights.x) * smoothstep(0.03h, 0.76h, front.a);
                 half amount = max(frontWeight + backWeight, 0.002h);
                 half3 painted = (front.rgb * frontWeight + back.rgb * backWeight) / amount;
                 half fill = 0.88h + 0.12h * saturate(dot(normalize(input.normalWS), half3(-0.43h, 0.79h, -0.43h)));
-                return half4(lerp(plum, painted, saturate(amount * 2.0h)) * fill, 1.0h);
+                half3 unpainted = lerp(half3(0.093h, 0.039h, 0.075h), _Unpainted.rgb, _Unpainted.a);
+                half3 surface = lerp(unpainted, painted, saturate(amount * 2.0h));
+                if (_SideArtwork > 0.0h)
+                {
+                    half4 side = SAMPLE_TEXTURE2D(_Back, sampler_Back, input.sideUV);
+                    half3 fur = lerp(unpainted, side.rgb, smoothstep(0.03h, 0.76h, side.a));
+                    surface = lerp(surface, fur, input.artworkWeights.y);
+                }
+                return half4(surface * fill, 1.0h);
             }
             ENDHLSL
         }

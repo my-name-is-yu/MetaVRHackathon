@@ -34,6 +34,17 @@ namespace Runeveil
             Render(stage, contact, shadow);
 
             boss = Group(stage, "Dark Muse");
+            if (!TryBuildMuseRig(arenaShader))
+                BuildFallbackMuse(arenaShader);
+
+            var warning = new Geometry("Warning arcs on Muse's raised paw");
+            warning.Tube(Arc(Vector3.zero, 0.53f, 0.55f, 105f, 246f, 23), 0.018f, 0xffb767);
+            warning.Tube(Arc(Vector3.back * 0.022f, 0.62f, 0.64f, 113f, 254f, 24), 0.009f, 0xffebac);
+            warningArcs = Render(museBody != null ? museBody : boss, warning, glow);
+        }
+
+        private void BuildFallbackMuse(Shader arenaShader)
+        {
             museBody = Group(boss, "Muse upper body");
             museHead = Group(museBody, "Muse head pivot");
             museHead.localPosition = new Vector3(0f, 2.13f, 0f);
@@ -89,11 +100,6 @@ namespace Runeveil
             AddWeakGem(ArenaTarget.RightHand, anchorArm.Fist, "Right hand crystal", new Vector3(0f, 0f, -0.39f));
             AddWeakGem(ArenaTarget.RaisedFist, attackArm.Fist, "Raised fist crystal", new Vector3(0f, 0.02f, -0.47f));
             BuildThornWind(arenaShader);
-
-            var warning = new Geometry("Warning arcs on Muse's raised paw");
-            warning.Tube(Arc(Vector3.zero, 0.53f, 0.55f, 105f, 246f, 23), 0.018f, 0xffb767);
-            warning.Tube(Arc(Vector3.back * 0.022f, 0.62f, 0.64f, 113f, 254f, 24), 0.009f, 0xffebac);
-            warningArcs = Render(museBody, warning, glow);
         }
 
         private void PoseMuse(bool rising, float thrust, bool heavyStrike, bool wardReleaseWindow)

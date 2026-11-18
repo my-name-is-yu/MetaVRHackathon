@@ -1,4 +1,4 @@
-"""Build the Save Muse! skinned studies from geometry and export one Unity FBX.
+"""Build the Save Muse! skinned game model and export one Unity FBX.
 
 Run from the project root:
 blender -b --factory-startup --python Tools/MuseRigPrototype/generate_muse.py
@@ -7,6 +7,7 @@ blender -b --factory-startup --python Tools/MuseRigPrototype/generate_muse.py
 import argparse
 import math
 import sys
+from functools import partial
 from pathlib import Path
 
 import bpy
@@ -14,7 +15,11 @@ from mathutils import Matrix, Vector
 
 
 PROJECT = Path(__file__).resolve().parents[2]
-BASE_OUTPUT = PROJECT / "Assets/Runeveil/Prototype/MusePrototype.fbx"
+BASE_OUTPUT = PROJECT / "Assets/Runeveil/Resources/Runeveil/Muse.fbx"
+sys.dont_write_bytecode = True
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from muse_artwork import artwork, dark_body, dark_horn, dark_side, white_side, white_surface
 
 
 def xyz(coords):
@@ -45,14 +50,13 @@ def material(name, shade, roughness=0.84):
     return result
 
 
-def oval(name, center, radii, mat=None, turn=0):
+def oval(name, center, radii, mat=None):
     bpy.ops.mesh.primitive_uv_sphere_add(segments=32, ring_count=20)
     obj = bpy.context.object
     obj.name = name
     rx, ry, rz = radii
     scale = Matrix.Diagonal((rx, rz, ry, 1))
-    tilt = Matrix.Rotation(math.radians(turn), 4, "Y")
-    obj.data.transform(Matrix.Translation(xyz(center)) @ tilt @ scale)
+    obj.data.transform(Matrix.Translation(xyz(center)) @ scale)
     if mat is not None:
         obj.data.materials.append(mat)
     for face in obj.data.polygons:
@@ -134,13 +138,11 @@ def rigid(obj, name):
     return obj
 
 
-def body_skin_weights(vert):
+def body_skin_weights(vert, sleeve):
     x, depth, y = vert
     ax = abs(x)
     side = ".L" if x >= 0 else ".R"
-    # Keep the belly on the torso while allowing a continuous blend at the armpit.
-    arm_start = 0.87 - 0.24 * smooth(1.57, 1.92, y)
-    arm_amount = smooth(arm_start, 1.035, ax) * (1 - smooth(2.14, 2.36, y)) * smooth(0.60, 0.77, y)
+    arm_amount = float(sleeve)
     # At the crotch the center of the body follows the pelvis. Lower down each
     # sole belongs entirely to its own foot so a planted foot stays on the floor.
     inner_hip = smooth(0.45, 0.86, y) * (1 - smooth(0.04, 0.31, ax))
@@ -177,10 +179,10 @@ def body_skin_weights(vert):
     )
 
 
-def body_weights(obj):
+def body_weights(obj, sleeve):
     groups = {}
     for vert in obj.data.vertices:
-        weights = [(name, value) for name, value in body_skin_weights(vert.co) if value >= 0.003]
+        weights = [(name, value) for name, value in body_skin_weights(vert.co, sleeve) if value >= 0.003]
         weights.sort(key=lambda item: item[1], reverse=True)
         weights = weights[:4]
         total = sum(value for _, value in weights)
@@ -190,88 +192,106 @@ def body_weights(obj):
             groups[name].add([vert.index], value / total, "REPLACE")
 
 
-def build_body(restored, mat):
-    if restored:
-        parts = [
-            oval("Cream body", (0, 1.44, 0.02), (0.83, 0.86, 0.58)),
-            oval("Cream hood", (0, 2.85, 0.02), (0.84, 0.78, 0.68)),
-            oval("Cream throat", (0, 2.20, 0.04), (0.58, 0.51, 0.47)),
-        ]
-    else:
-        parts = [
-            oval("Dark body", (0, 1.49, 0.07), (0.93, 0.92, 0.63)),
-            oval("Dark hood", (0, 2.84, 0.04), (0.92, 0.80, 0.70)),
-            oval("Dark throat", (0, 2.17, 0.04), (0.67, 0.49, 0.49)),
-        ]
-    arm_width = 0.245 if restored else 0.27
-    foot_width = 0.285 if restored else 0.305
-    for side in (-1, 1):
-        shoulder = (side * 0.72, 2.04, 0)
-        elbow = (side * 1.17, 1.69, -0.06)
-        wrist = (side * 1.37, 1.24, -0.20)
-        parts.extend([
-            oval("Shoulder cushion", (side * 0.70, 1.99, 0.00), (0.34, 0.34, 0.33)),
-            soft_segment("Upper arm", shoulder, elbow, arm_width, arm_width, 0.22),
-            soft_segment("Forearm", elbow, wrist, arm_width, arm_width, 0.19),
-            oval("Mitten", (side * 1.39, 1.16, -0.22), (0.27, 0.34, 0.29)),
-            soft_segment("Thigh", (side * 0.42, 1.03, 0), (side * 0.45, 0.57, -0.11), 0.27, 0.32, 0.19),
-            soft_segment("Shin", (side * 0.45, 0.62, -0.11), (side * 0.47, 0.24, -0.01), 0.26, 0.29, 0.17),
-            oval("Foot", (side * 0.47, 0.195, -0.13), (foot_width, 0.215, 0.38)),
-        ])
+def sculpt_face(vertex, restored):
+    """Shape the face and the hood into the same surface."""
+    x, front, height = vertex
+    forehead = 2.87 if restored else 2.82
+    face_radius = math.hypot(x / 0.67, (height - forehead) / 0.54)
+    facing = smooth(0.15, 0.40, front)
+    if facing == 0 or face_radius >= 1.40:
+        return
 
-    obj = join(parts, "White Plush" if restored else "Dark Plush")
-    obj.data.remesh_voxel_size = 0.044
+    # A shallow face with a small fur roll around it reads in profile without
+    # introducing the separate face plate from the previous mesh.
+    cheek = 0.044 * (1 - smooth(0.15, 0.96, face_radius))
+    rim = 0.023 * smooth(0.79, 0.96, face_radius) * (1 - smooth(0.96, 1.28, face_radius))
+    vertex.y += facing * (cheek + rim)
+    if not restored:
+        # The original swept forelock is a soft ridge at the forehead, sculpted
+        # into the hood so the edge and face remain one skinned volume.
+        ridge = math.exp(-((x + 0.02) / 0.28) ** 2 - ((height - 3.34 - x * 0.37) / 0.15) ** 2)
+        vertex.y += facing * ridge * 0.047
+
+
+def shape_armpit(belly, sleeve_parts, side):
+    # Leave a clearance where the closed sleeve passes the flank at rest.
+    for obj in sleeve_parts:
+        for vert in obj.data.vertices:
+            x, _, height = vert.co
+            gap = smooth(1.15, 1.30, height) * (1 - smooth(1.63, 1.88, height))
+            edge = 1.17 - 0.30 * smooth(1.61, 1.95, height)
+            vert.co.x += side * max(0, edge - side * x) * gap
+    for vert in belly.data.vertices:
+        x, _, height = vert.co
+        if x * side <= 0:
+            continue
+        gap = smooth(1.10, 1.30, height) * (1 - smooth(1.57, 1.80, height))
+        vert.co.x -= side * 0.045 * smooth(0.88, 1.05, abs(x)) * gap
+
+
+def build_shell(parts, name, mat, restored, sleeve=False):
+    obj = join(parts, name)
+    obj.data.remesh_voxel_size = 0.049
     bpy.ops.object.voxel_remesh()
     smooth_mesh = obj.modifiers.new("Smooth joined shapes", "SMOOTH")
     smooth_mesh.factor = 0.64
-    smooth_mesh.iterations = 7
+    smooth_mesh.iterations = 6
     bpy.ops.object.modifier_apply(modifier=smooth_mesh.name)
-    for v in obj.data.vertices:
-        # Four centimeters of flat sole make the contact easy to read in side view.
-        v.co.z = max(0, v.co.z - 0.028 * (1 - smooth(0.00, 0.080, v.co.z)))
+    if not sleeve:
+        for v in obj.data.vertices:
+            # Four centimeters of flat sole make the contact easy to read in side view.
+            v.co.z = max(0, v.co.z - 0.028 * (1 - smooth(0.00, 0.080, v.co.z)))
+            sculpt_face(v.co, restored)
     for p in obj.data.polygons:
         p.use_smooth = True
     obj.data.materials.clear()
     obj.data.materials.append(mat)
-    body_weights(obj)
+    body_weights(obj, sleeve)
     return obj
 
 
-def smile_arc(name, points, radius, mat):
-    curve = bpy.data.curves.new(name, "CURVE")
-    curve.dimensions = "3D"
-    curve.bevel_depth = radius
-    curve.bevel_resolution = 2
-    curve.resolution_u = 8
-    spline = curve.splines.new("BEZIER")
-    spline.bezier_points.add(len(points) - 1)
-    for knot, pos in zip(spline.bezier_points, points):
-        knot.co = xyz(pos)
-        knot.handle_left_type = "AUTO"
-        knot.handle_right_type = "AUTO"
-    path = bpy.data.objects.new(name, curve)
-    bpy.context.collection.objects.link(path)
-    path.data.materials.append(mat)
-    select_only(path)
-    bpy.ops.object.convert(target="MESH")
-    return bpy.context.object
-
-
-def build_faces(body, restored, face, eyes):
-    plane = rigid(oval("Face", (0, 2.83, -0.55), (0.68, 0.56, 0.22), face), "Head")
-    parts = [body, plane]
+def build_form(restored, mat):
+    # Both forms follow the same pear-shaped silhouette, with the hood seated
+    # into the broad shoulder cushion and the legs tucked up into the belly.
+    width = 1.017 if restored else 1.052
+    hood_width = 0.88 if restored else 0.895
+    belly = oval("Rounded belly", (0, 1.32, 0.123), (width, 1.035, 0.761))
+    parts = [
+        belly,
+        oval("Hood", (0, 2.79, 0.080), (hood_width, 0.815, 0.688)),
+        oval("Shoulder cushion", (0, 2.12, 0.053), (0.795, 0.63, 0.625)),
+    ]
+    sleeves = []
+    arm_width = 0.275 if restored else 0.29
     for side in (-1, 1):
-        if restored:
-            eye = oval("Kind eye", (side * 0.235, 2.89, -0.755), (0.072, 0.092, 0.046), eyes)
-        else:
-            eye = oval("Dark eye", (side * 0.237, 2.93, -0.755), (0.155, 0.086, 0.042), eyes, turn=-side * 24)
-        parts.append(rigid(eye, "Head"))
-    if restored:
-        mouth = smile_arc("Restored smile", ((-0.125, 2.73, -0.762), (0, 2.66, -0.771), (0.125, 2.73, -0.762)), 0.023, eyes)
-    else:
-        mouth = oval("Dark open mouth", (0, 2.61, -0.749), (0.172, 0.188, 0.035), eyes)
-    parts.append(rigid(mouth, "Head"))
-    return join(parts, "MuseWhite" if restored else "MuseDark")
+        shoulder = (side * 0.72, 2.04, 0)
+        elbow = (side * 1.17, 1.69, -0.06)
+        wrist = (side * 1.37, 1.24, -0.20)
+        sleeve = [
+            oval("Sleeve root", (side * 0.59, 2.035, 0.015), (0.375, 0.30, 0.302)),
+            soft_segment("Upper arm", shoulder, elbow, arm_width, arm_width, 0.24),
+            soft_segment("Forearm", elbow, wrist, arm_width + 0.008, arm_width + 0.008, 0.21),
+            oval("Rounded mitten", (side * 1.39, 1.16, -0.22), (0.295, 0.349, 0.313)),
+        ]
+        shape_armpit(belly, sleeve, side)
+        sleeves.append(build_shell(sleeve, "Closed sleeve", mat, restored, sleeve=True))
+        parts.extend([
+            oval("Shoulder lining", (side * 0.59, 2.035, 0.027), (0.277, 0.295, 0.290)),
+            soft_segment("Thigh", (side * 0.43, 1.02, 0), (side * 0.45, 0.52, -0.08), 0.30, 0.33, 0.23),
+            soft_segment("Shin", (side * 0.45, 0.62, -0.08), (side * 0.47, 0.23, -0.01), 0.283, 0.315, 0.21),
+            oval("Plush foot", (side * 0.47, 0.193, -0.10), (0.323, 0.216, 0.355)),
+        ])
+
+    surface = white_surface if restored else dark_body
+    side_surface = white_side if restored else dark_side
+    body = build_shell(parts, "Continuous torso", mat, restored)
+    artwork(body, surface, side_blend=0.31, side_project=side_surface)
+    for sleeve in sleeves:
+        artwork(sleeve, partial(surface, sleeve=True), side_blend=0.31, side_project=side_surface)
+
+    # Pack the three closed parts into one skinned renderer. They overlap at the
+    # plush seam, with no vertices connecting the sleeve to the moving flank.
+    return join((body, *sleeves), "MuseWhite" if restored else "MuseDark")
 
 
 def crystal(name, center, radii, mat, sort):
@@ -286,11 +306,12 @@ def crystal(name, center, radii, mat, sort):
 
 def horn(sign, material_, marker):
     path = (
-        ((sign * 0.63, 3.24, -0.08), 0.21),
-        ((sign * 0.78, 3.47, -0.13), 0.19),
-        ((sign * 0.81, 3.69, -0.15), 0.155),
-        ((sign * 0.71, 3.86, -0.16), 0.094),
-        ((sign * 0.54, 3.96, -0.18), 0.012),
+        ((sign * 0.62, 3.22, -0.095), 0.249),
+        ((sign * 0.765, 3.44, -0.125), 0.249),
+        ((sign * 0.80, 3.65, -0.135), 0.215),
+        ((sign * 0.715, 3.84, -0.16), 0.168),
+        ((sign * 0.58, 3.94, -0.17), 0.10),
+        ((sign * 0.40, 3.94, -0.18), 0.022),
     )
     corners = 7
     centers = [xyz(p) for p, _ in path]
@@ -301,7 +322,9 @@ def horn(sign, material_, marker):
         v = tangent.normalized().cross(u)
         for j in range(corners):
             angle = 2 * math.pi * (j / corners + (i % 2) * 0.025)
-            verts.append(center + radius * (math.cos(angle) * u + math.sin(angle) * v))
+            offset = radius * (math.cos(angle) * u + math.sin(angle) * v)
+            offset.y *= 0.85
+            verts.append(center + offset)
 
     faces = [tuple(reversed(range(corners)))]
     for level in range(len(centers) - 1):
@@ -316,24 +339,33 @@ def horn(sign, material_, marker):
     obj = bpy.data.objects.new(marker, mesh)
     bpy.context.collection.objects.link(obj)
     obj.data.materials.append(material_)
+    artwork(obj, dark_horn, depth_center=0.15, side_blend=0.155)
     return rigid(obj, marker)
 
 
-def build_corruption():
-    horn_mat = material("MuseHornStone", (0.17, 0.16, 0.17), 0.58)
-    gem = material("MuseCrystal", (0.67, 0.65, 0.66), 0.28)
-    rim = material("MuseCrystalRim", (0.19, 0.18, 0.19), 0.58)
+def build_corruption(horn_mat):
+    gem = material("MuseCrystal", (0.95, 0.095, 0.38), 0.28)
+    rim = material("MuseCrystalRim", (0.25, 0.052, 0.13), 0.58)
+    sides = ((1, ".L"), (-1, ".R"))
+    horns = [horn(side, horn_mat, "Horn" + suffix) for side, suffix in sides]
     parts = [
-        rigid(oval("Crystal seat", (0, 1.61, -0.61), (0.32, 0.31, 0.13), rim), "Core"),
-        crystal("Chest crystal", (0, 1.61, -0.68), (0.21, 0.245, 0.15), gem, "Core"),
+        rigid(oval("Crystal seat", (0, 1.61, -0.599), (0.221, 0.262, 0.078), rim), "Core"),
+        crystal("Chest crystal", (0, 1.61, -0.68), (0.146, 0.206, 0.095), gem, "Core"),
     ]
-    for side, suffix in ((1, ".L"), (-1, ".R")):
+    for side, suffix in sides:
         parts.extend([
-            horn(side, horn_mat, "Horn" + suffix),
-            crystal("Horn shard", (side * 0.60, 3.45, -0.31), (0.11, 0.13, 0.10), gem, "Horn" + suffix),
-            crystal("Paw crystal", (side * 1.40, 1.19, -0.49), (0.125, 0.14, 0.083), gem, "PawGem" + suffix),
+            crystal("Horn shard", (side * 0.60, 3.45, -0.31), (0.09, 0.114, 0.078), gem, "Horn" + suffix),
+            crystal("Paw crystal", (side * 1.40, 1.19, -0.49), (0.106, 0.127, 0.088), gem, "PawGem" + suffix),
         ])
-    return join(parts, "MuseCorruption")
+    for part in parts:
+        while part.data.uv_layers:
+            part.data.uv_layers.remove(part.data.uv_layers[0])
+        # ArenaSurface multiplies the imported vertex color by its material.
+        # The ornament and crystal facets are unpainted, so retain that material tint.
+        colors = part.data.color_attributes.new(name="Facing", type="FLOAT_COLOR", domain="CORNER")
+        for color in colors.data:
+            color.color = (1.0, 1.0, 1.0, 1.0)
+    return join(horns + parts, "MuseCorruption")
 
 
 def validate(objects):
@@ -357,22 +389,17 @@ def main():
     bpy.context.scene.render.fps = 60
 
     rig = build_rig()
-    ink = material("MuseInk", (0.027, 0.024, 0.025), 0.62)
-    plush = material("MuseDarkPlush", (0.265, 0.257, 0.268))
-    mask = material("MuseDarkMask", (0.49, 0.475, 0.48))
-    ivory = material("MuseIvoryPlush", (0.81, 0.78, 0.71))
-    ivory_face = material("MuseIvoryFace", (0.93, 0.89, 0.80))
-    dark = build_faces(build_body(False, plush), False, mask, ink)
-    white = build_faces(build_body(True, ivory), True, ivory_face, ink)
-    attachments = build_corruption()
+    plush = material("MuseDarkArtwork", (0.265, 0.257, 0.268))
+    ivory = material("MuseWhiteArtwork", (0.81, 0.78, 0.71))
+    dark = build_form(False, plush)
+    white = build_form(True, ivory)
+    attachments = build_corruption(plush)
     objects = (dark, white, attachments)
     for obj in objects:
         skin(obj, rig)
     validate(objects)
 
     if not args.model_only:
-        sys.dont_write_bytecode = True
-        sys.path.insert(0, str(Path(__file__).resolve().parent))
         from muse_idle_reactions import build_idle_and_reactions
         from muse_motion import build_actions
 
