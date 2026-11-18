@@ -1,6 +1,6 @@
 # Save Muse! — Competition Submission Packet
 
-**Private working packet.** The Devpost entry has not been submitted. Representative `my-name-is-yu` owns the video publication and Devpost submission. The public video URL is pending; the Google Drive file is not a public link.
+**Private working packet.** The Devpost entry has not been submitted. Representative `my-name-is-yu` owns the video publication and Devpost submission. Google Drive is the representative's video delivery destination; the public YouTube or Vimeo URL for judging remains to be set by the representative.
 
 ## Public Devpost copy
 
@@ -29,7 +29,7 @@ Pinch thumb and index finger to trace a spell from the on-screen guide; release 
 - **Track:** Gaming.
 - **Division:** New is provisional. Confirm it against the event's New Experience rule, including the Meta-template exception, and the team's dated project provenance before selection; use the Adapted criteria if New is not eligible.
 - **Target launch date, if unpublished:** Representative to confirm.
-- **Demo video URL:** Pending. Add only after the representative publishes and verifies a public YouTube or Vimeo URL.
+- **Demo video URL:** Pending. The representative will set up a publicly playable YouTube or Vimeo URL for judging and add it after verifying playback.
 
 ## Judge instructions
 
@@ -45,7 +45,8 @@ Pinch thumb and index finger to trace a spell from the on-screen guide; release 
 - **Owner/status:** `my-name-is-yu` is the designated representative and will handle the Competition channel/invite, public video publication, and Devpost submission. These actions are pending.
 - **Verified candidate APK:** [Private prerelease page](https://github.com/my-name-is-yu/MetaVRHackathon/releases/tag/save-muse-competition-candidate-0.2.3-2026-11-18) · [APK asset](https://github.com/my-name-is-yu/MetaVRHackathon/releases/download/save-muse-competition-candidate-0.2.3-2026-11-18/Save-Muse-0.2.3-release.apk). Asset: `Save-Muse-0.2.3-release.apk`; verified SHA-256: `397b1244bcde2ea4b5741b406c9d1fde0c46beba30722186f62cb4dd47da9073`. This GitHub prerelease is the APK handoff, not the competition judge invite.
 - **Competition judge access:** Create or select Save Muse!'s dedicated Competition channel, enable its invite, and verify judge access. Share the invite only through the official private submission field.
-- **Video delivery:** `Save Muse! - Competition Demo.mp4` is saved to the team's Google Drive. Verified export: 32.000 s, 36,479,770 bytes, SHA-256 `b0378f14364e6d3fd597017851a2175c80f11091c54ac85249db6e8e7303f95d` (H.264, 1920×1080, 30 fps; AAC stereo, 48 kHz). The Drive file is private. Public video URL is still pending: publish from the team's authorized YouTube or Vimeo channel, check public playback without sign-in, then add that URL to Devpost. Do not put personal Drive source links or a private Drive URL in public Devpost fields.
+- **Video delivery:** `Save Muse! - Competition Demo.mp4` is delivered to Google Drive for the representative. Verified export: 32.000 s, 36,479,770 bytes, SHA-256 `b0378f14364e6d3fd597017851a2175c80f11091c54ac85249db6e8e7303f95d` (H.264, 1920×1080, 30 fps; AAC stereo, 48 kHz). The public judging URL is pending: the representative will publish through the team's authorized YouTube or Vimeo channel, verify playback without sign-in, and add that public URL to Devpost. Do not use the Drive delivery URL or source-recording links in public Devpost fields.
+- **Submission art:** [Devpost cover](SubmissionArt/Save-Muse-Devpost-Cover.jpg) and [video thumbnail](SubmissionArt/Save-Muse-Video-Thumbnail.jpg). Use each image in its corresponding representative-controlled entry field.
 - Confirm the roster and public display names. Supply emails only in the official form.
 - Confirm the New vs Adapted division and target launch date if the experience is unpublished.
 - Submit through the representative's authenticated Devpost account, save the submission receipt, and verify judge access through the winner-announcement period.
