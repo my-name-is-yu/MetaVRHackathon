@@ -6,6 +6,20 @@ namespace Runeveil
     internal enum AttackResult { None, Hit, Blocked }
     internal enum CastResult { None, Hit, Miss, Interrupt, Exposed, FocusHit }
 
+    internal readonly struct SpellTarget
+    {
+        public readonly ArenaTarget Part;
+        public readonly ArenaTarget FocusedPart;
+        public readonly int WeakPointRevision;
+
+        public SpellTarget(ArenaTarget part, ArenaTarget focusedPart, int weakPointRevision)
+        {
+            Part = part;
+            FocusedPart = focusedPart;
+            WeakPointRevision = weakPointRevision;
+        }
+    }
+
     internal sealed class RuneveilDuel
     {
         public const int MaxBossHealth = 120;
@@ -27,7 +41,9 @@ namespace Runeveil
         float focusedSeconds;
         float shieldLeft;
         float weakGapLeft;
-        int nextWeakPoint;
+        ArenaTarget nextWeakPoint;
+        ArenaTarget focusedPart;
+        int weakPointRevision;
 
         public DuelPhase Phase { get; private set; } = DuelPhase.Practice;
         public int BossHealth { get; private set; } = MaxBossHealth;
@@ -38,8 +54,10 @@ namespace Runeveil
         public float Stagger { get; private set; }
         /// <summary>バリアに防がれた拳が地面に刺さっている残り秒数。</summary>
         public float Stuck { get; private set; }
-        /// <summary>今光っている弱点の部位番号（<see cref="RuneveilArena.WeakPointNames"/> の添字）。割れた直後の間は -1。</summary>
-        public int WeakPoint { get; private set; }
+        /// <summary>推奨する弱点。結晶が割れてから次が現れるまでは Miss。</summary>
+        public ArenaTarget WeakPoint { get; private set; } = ArenaTarget.Core;
+        public ArenaTarget ShatteredPoint { get; private set; }
+        public ArenaTarget ExposedTarget => FocusReady ? focusedPart : ArenaTarget.Miss;
         public int Interruptions { get; private set; }
         public int Blocks { get; private set; }
         public bool Finished => Phase == DuelPhase.Won || Phase == DuelPhase.Lost;
@@ -67,7 +85,9 @@ namespace Runeveil
             shieldLeft = 0;
             Stagger = 0;
             Stuck = 0;
-            WeakPoint = 0;
+            WeakPoint = ArenaTarget.Core;
+            ShatteredPoint = ArenaTarget.Miss;
+            weakPointRevision++;
             weakGapLeft = 0;
             Interruptions = 0;
             Blocks = 0;
@@ -115,17 +135,27 @@ namespace Runeveil
             return blocked ? AttackResult.Blocked : AttackResult.Hit;
         }
 
-        public void TrackFocus(bool gazeOnCore, float deltaTime)
+        public void TrackFocus(ArenaTarget target, float deltaTime)
         {
-            if (Finished || Windup < 0 || !gazeOnCore)
+            if (Finished || Windup < 0 || !WeakPoint.IsWeakPoint() || !target.IsWeakPoint())
+                target = ArenaTarget.Miss;
+            if (target != focusedPart)
             {
-                focusedSeconds = 0f;
-                return;
+                ClearFocus();
+                focusedPart = target;
             }
 
-            // When this frame crossed into windup, count only its time within the warning.
-            if (deltaTime > 0f)
+            // Count only the part of a frame that fell inside the warning.
+            if (target != ArenaTarget.Miss && deltaTime > 0f)
                 focusedSeconds = Mathf.Min(FocusSeconds, focusedSeconds + Mathf.Min(deltaTime, -attackIn));
+        }
+
+        public SpellTarget CaptureTarget(ArenaTarget part)
+        {
+            ArenaTarget focus = part.IsWeakPoint() && part == ExposedTarget ? part : ArenaTarget.Miss;
+            if (part.IsWeakPoint() && part != WeakPoint && focus == ArenaTarget.Miss)
+                part = ArenaTarget.Body;
+            return new SpellTarget(part, focus, weakPointRevision);
         }
 
         /// <summary>
@@ -147,15 +177,14 @@ namespace Runeveil
 
         /// <summary>
         /// 攻撃魔法が着弾したときに呼び、ダメージと拳の中断を決める。
-        /// <paramref name="part"/> と <paramref name="focusedAtRelease"/> は指を離した瞬間の状態で、
-        /// 弱点扱いかどうかはそのときの見た目で決まる。
+        /// <paramref name="target"/> は指を離した瞬間に決まった部位と露呈状態。
         /// <paramref name="level"/> は溜めのレベルで、Lv1 が通常、1つ上がるごとにダメージが50%増える。
         /// </summary>
-        public CastResult Hit(Spell spell, ArenaTarget target, int part, bool focusedAtRelease, int level = 1)
+        public CastResult Hit(Spell spell, SpellTarget target, int level = 1)
         {
             if (Finished || spell == Spell.Barrier) return CastResult.None;
             level = Mathf.Max(1, level);
-            if (target == ArenaTarget.Miss) return CastResult.Miss;
+            if (target.Part == ArenaTarget.Miss) return CastResult.Miss;
 
             int damage = spell switch
             {
@@ -169,9 +198,9 @@ namespace Runeveil
             if (damage == 0) return CastResult.None;
 
             // 拳を止めた一撃自体には倍率をかけず、ダウン中の追撃だけを倍にする
-            bool weak = target == ArenaTarget.Core;
+            bool weak = target.Part.IsWeakPoint();
             bool exposed = Stagger > 0 && weak;
-            bool focused = focusedAtRelease && weak;
+            bool focused = weak && target.FocusedPart == target.Part;
             bool interrupted = spell == Spell.Lightning && weak && Windup >= 0f;
             if (interrupted)
             {
@@ -179,8 +208,9 @@ namespace Runeveil
                 Stagger = StaggerSeconds;
                 Recover();
             }
-            // 狙った弱点がまだ光っていれば割り、一拍おいて別の部位へ移す（飛んでいる間に移っていたら二重には移さない）
-            if (weak && part == WeakPoint) BreakWeakPoint();
+            // An earlier projectile may already have shattered this set of weak points.
+            if (weak && target.WeakPointRevision == weakPointRevision && WeakPoint.IsWeakPoint())
+                BreakWeakPoint(target.Part);
 
             if (Phase == DuelPhase.Battle)
             {
@@ -204,19 +234,33 @@ namespace Runeveil
             return focused ? CastResult.FocusHit : CastResult.Hit;
         }
 
-        void BreakWeakPoint()
+        void BreakWeakPoint(ArenaTarget part)
         {
-            // 直前と同じ部位を除いた残りから選ぶ
-            int pick = random.Next(RuneveilArena.WeakPointCount - 1);
-            nextWeakPoint = pick >= WeakPoint ? pick + 1 : pick;
-            WeakPoint = -1;
+            int struck = part.WeakPointIndex();
+            int recommended = WeakPoint.WeakPointIndex();
+            int first = Mathf.Min(struck, recommended);
+            int last = Mathf.Max(struck, recommended);
+            int pick = random.Next(RuneveilArena.WeakPointCount - (first == last ? 1 : 2));
+            if (pick >= first) pick++;
+            if (last != first && pick >= last) pick++;
+            nextWeakPoint = (ArenaTarget)((int)ArenaTarget.Core + pick);
+            ShatteredPoint = part;
+            WeakPoint = ArenaTarget.Miss;
+            weakPointRevision++;
             weakGapLeft = WeakPointGapSeconds;
+            ClearFocus();
         }
 
         void Recover()
         {
             attackIn = Enraged ? EnragedIdleSeconds : IdleSeconds;
             Windup = -1;
+            ClearFocus();
+        }
+
+        void ClearFocus()
+        {
+            focusedPart = ArenaTarget.Miss;
             focusedSeconds = 0f;
         }
     }

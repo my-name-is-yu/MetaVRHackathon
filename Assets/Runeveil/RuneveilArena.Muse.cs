@@ -47,8 +47,6 @@ namespace Runeveil
                 new(345, 1030), new(310, 972), new(294, 910), new(293, 840), new(306, 783), new(327, 730),
                 new(335, 661), new(351, 609), new(423, 572), new(512, 549)
             }, p => MusePoint(p, 0.043f), new(0.865f, 0.777f), faces: 24);
-            MuseHit(boss, MusePoint(new(626, 850), 0.04f), new(1.10f, 0.84f, 0.86f));
-            MuseHit(boss, MusePoint(new(626, 684), 0.02f), new(0.94f, 0.40f, 0.69f));
 
             MuseForm(boss, plush, "Cream face and swept plum head", new(625, 417), new Vector2[] {
                 new(617, 166), new(677, 166), new(734, 178), new(786, 216), new(835, 256), new(878, 306),
@@ -62,7 +60,6 @@ namespace Runeveil
                     ? 0.067f * MuseBump(p, new(638, 284), new(77, 61)) + 0.022f * MuseBump(p, new(629, 515), new(183, 70))
                     : 0.103f * MuseBump(p, new(625, 322), new(81, 69)),
                 faces: 28);
-            MuseHit(boss, MusePoint(new(625, 420), -0.045f), new(1.08f, 0.83f, 0.91f));
             MuseEyes = Group(boss, "Muse eye midpoint");
             MuseEyes.localPosition = MusePoint(new(628, 418), -0.93f);
             for (int side = -1; side <= 1; side += 2)
@@ -76,10 +73,8 @@ namespace Runeveil
             BuildMuseGem();
             attackArm = BuildMuseArm(plush, paw, 1);
             anchorArm = BuildMuseArm(plush, paw, -1);
-            // 胸以外の弱点は額と両方の拳に小さな結晶として付ける。拳の結晶は拳と一緒に動く
-            AddWeakGem(1, boss, "Brow crystal", MusePoint(new(628, 292), -0.90f), 0.7f);
-            AddWeakGem(2, anchorArm.Fist, "Resting paw crystal", new Vector3(0f, 0f, -0.39f), 0.7f);
-            AddWeakGem(3, attackArm.Fist, "Raised paw crystal", new Vector3(0f, 0.02f, -0.47f), 0.7f);
+            AddWeakGem(ArenaTarget.RightHand, anchorArm.Fist, "Right hand crystal", new Vector3(0f, 0f, -0.39f));
+            AddWeakGem(ArenaTarget.RaisedFist, attackArm.Fist, "Raised fist crystal", new Vector3(0f, 0.02f, -0.47f));
             BuildThornWind(arenaShader);
 
             var warning = new Geometry("Amber arc on Muse's raised paw");
@@ -121,8 +116,6 @@ namespace Runeveil
             };
             MuseForm(boss, plush, side > 0 ? "Right stuffed foot" : "Left stuffed foot", new(768, 1104), outline,
                 p => MusePoint(Mirror(p), 0.025f), new(0.62f, 0.52f), frontPixel: Mirror, backPixel: p => OtherSide(Mirror(p)));
-            MuseHit(boss, MusePoint(Mirror(new(768, 1103)), 0.02f), new(0.381f, 0.347f, 0.62f));
-            MuseHit(boss, MusePoint(Mirror(new(768, 1151)), -0.035f), new(0.345f, 0.16f, 0.50f));
         }
 
         private void BuildMuseHorn(Material plush, int side)
@@ -134,36 +127,39 @@ namespace Runeveil
                 new(493, 191), new(515, 208), new(496, 231), new(459, 263), new(424, 301), new(393, 321),
                 new(367, 310), new(341, 280)
             };
-            MuseForm(boss, plush, side < 0 ? "Left cracked crystal horn" : "Right cracked crystal horn",
+            // Left and right are named from the Muse's perspective.
+            ArenaTarget target = side < 0 ? ArenaTarget.RightHorn : ArenaTarget.LeftHorn;
+            MuseForm(boss, plush, target.DisplayName() + " (cracked crystal horn)",
                 new(407, 209), outline, p => MusePoint(Mirror(p), -0.07f), new(0.47f, 0.43f),
                 frontPixel: Mirror, backPixel: p => OtherSide(Mirror(p)),
-                relief: (p, _) => 0.035f * MuseBump(p, new(386, 206), new(37, 75)), faces: 12, outlineSteps: 1);
-            MuseHit(boss, MusePoint(Mirror(new(406, 237)), -0.07f), new(0.295f, 0.29f, 0.47f), new(0, 0, side * 21));
-            MuseHit(boss, MusePoint(Mirror(new(367, 160)), -0.07f), new(0.17f, 0.20f, 0.30f), new(0, 0, side * 31));
-            MuseHit(boss, MusePoint(Mirror(new(450, 106)), -0.07f), new(0.21f, 0.118f, 0.22f), new(0, 0, side * 22));
+                relief: (p, _) => 0.035f * MuseBump(p, new(386, 206), new(37, 75)), faces: 12, outlineSteps: 1, target: target);
+            AddWeakGem(target, boss, target.DisplayName() + " crystal", MusePoint(Mirror(new(407, 209)), -0.56f));
         }
 
         private void BuildMuseGem()
         {
             Core = Group(boss, "Pink chest crystal");
             Core.localPosition = MusePoint(new(632, 783), -0.822f);
-            weakAnchors[0] = Core;
-            weakVolumes[0] = new HitVolume(Core, Vector3.back * 0.024f, new(0.151f, 0.264f, 0.151f), Quaternion.identity);
-            weakGems[0] = Render(Core, MuseGemGeometry("Faceted rose crystal", 1f), vivid);
-            weakHalos[0] = Render(Core, "Pink crystal radiance", softDisc, softGlow);
-            weakHalos[0].transform.localPosition = Vector3.back * 0.10f;
+            BuildWeakGem(ArenaTarget.Core, Core, "Faceted rose crystal", 1f);
         }
 
-        private void AddWeakGem(int index, Transform parent, string label, Vector3 localPosition, float scale)
+        private void AddWeakGem(ArenaTarget target, Transform parent, string label, Vector3 localPosition)
         {
             Transform anchor = Group(parent, label);
             anchor.localPosition = localPosition;
+            BuildWeakGem(target, anchor, label, 0.7f);
+        }
+
+        private void BuildWeakGem(ArenaTarget target, Transform anchor, string label, float scale)
+        {
+            int index = target.WeakPointIndex();
             weakAnchors[index] = anchor;
-            // 小さい結晶でも狙えるよう、判定は見た目より一回り大きく取る
-            weakVolumes[index] = new HitVolume(anchor, Vector3.back * 0.02f, new(0.17f, 0.21f, 0.17f), Quaternion.identity);
-            weakGems[index] = Render(anchor, MuseGemGeometry(label, scale), vivid);
+            Mesh mesh = Track(MuseGemGeometry(label, scale).CreateMesh(keepReadable: true));
+            weakGems[index] = Render(anchor, label, mesh, vivid);
+            hitSurfaces.Add(new HitSurface(weakGems[index].transform, mesh.vertices, mesh.triangles, target));
+            mesh.UploadMeshData(true);
             weakHalos[index] = Render(anchor, label + " radiance", softDisc, softGlow);
-            weakHalos[index].transform.localPosition = Vector3.back * 0.08f;
+            weakHalos[index].transform.localPosition = Vector3.back * 0.1f;
         }
 
         private static Geometry MuseGemGeometry(string label, float scale)
@@ -203,7 +199,6 @@ namespace Runeveil
                     new Vector3((p.y - center.y) * MuseScale * side, (p.x - center.x) * MuseScale, 0f),
                     new(0.335f, 0.285f), frontPixel: raised ? null : OtherSide,
                     backPixel: raised ? OtherSide : p => p);
-                MuseHit(part, Vector3.zero, new(0.296f, 0.33f, 0.335f));
             }
             Segment(arm.Upper, "Plush shoulder with curled stone trim", new(919, 680), new Vector2[] {
                 new(809, 678), new(829, 630), new(867, 603), new(939, 600), new(997, 610),
@@ -232,8 +227,7 @@ namespace Runeveil
                 relief: (p, front) => front && raised
                     ? 0.038f * Mathf.Cos((p.x + p.y * 0.44f) * 0.088f) * MuseBump(p, new(1023, 252), new(95, 82))
                     : 0f,
-                faces: 20);
-            MuseHit(arm.Fist, Vector3.zero, raised ? new(0.49f, 0.429f, 0.457f) : new(0.359f, 0.43f, 0.37f));
+                faces: 20, target: raised ? ArenaTarget.RaisedFist : ArenaTarget.RightHand);
             return arm;
         }
 
@@ -245,7 +239,8 @@ namespace Runeveil
 
         private void MuseForm(Transform parent, Material material, string label, Vector2 center, Vector2[] outline,
             Func<Vector2, Vector3> plane, Vector2 depth, Func<Vector2, Vector2> frontPixel = null,
-            Func<Vector2, Vector2> backPixel = null, Func<Vector2, bool, float> relief = null, int faces = 14, int outlineSteps = 2)
+            Func<Vector2, Vector2> backPixel = null, Func<Vector2, bool, float> relief = null, int faces = 14,
+            int outlineSteps = 2, ArenaTarget target = ArenaTarget.Body)
         {
             int sides = outline.Length * outlineSteps;
             var rim = new Vector2[sides];
@@ -301,15 +296,14 @@ namespace Runeveil
             var mesh = Track(new Mesh { name = label, vertices = points, uv = frontUvs, uv2 = backUvs, colors32 = weights });
             mesh.SetTriangles(triangles, 0);
             mesh.RecalculateNormals();
-            Render(parent, label, mesh, material);
+            var renderer = Render(parent, label, mesh, material);
+            hitSurfaces.Add(new HitSurface(renderer.transform, points, triangles, target));
+            mesh.UploadMeshData(true);
         }
 
         private static Vector2 Catmull(Vector2 a, Vector2 b, Vector2 c, Vector2 d, float t) =>
             0.5f * ((2f * b) + (-a + c) * t + (2f * a - 5f * b + 4f * c - d) * (t * t) +
                 (-a + 3f * b - 3f * c + d) * (t * t * t));
-
-        private void MuseHit(Transform parent, Vector3 center, Vector3 radii, Vector3 euler = default) =>
-            bodyVolumes.Add(new HitVolume(parent, center, radii, Quaternion.Euler(euler)));
 
         private void BuildThornWind(Shader shader)
         {

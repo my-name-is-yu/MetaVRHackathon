@@ -5,20 +5,36 @@ using UnityEngine.Rendering;
 
 namespace Runeveil
 {
-    /// <summary>照準の当たり先。Core は今光っている弱点を指し、胸の結晶とは限らない。</summary>
-    public enum ArenaTarget { Miss, Body, Core }
+    public enum ArenaTarget { Miss, Body, Core, RightHand, LeftHorn, RightHorn, RaisedFist }
+
+    internal static class ArenaTargetExtensions
+    {
+        public static bool IsWeakPoint(this ArenaTarget target) =>
+            target is ArenaTarget.Core or ArenaTarget.RightHand or ArenaTarget.LeftHorn or ArenaTarget.RightHorn or ArenaTarget.RaisedFist;
+
+        public static int WeakPointIndex(this ArenaTarget target) =>
+            target.IsWeakPoint() ? (int)target - (int)ArenaTarget.Core : -1;
+
+        public static string DisplayName(this ArenaTarget target) => target switch
+        {
+            ArenaTarget.Core => "Crystal core",
+            ArenaTarget.RightHand => "Right hand",
+            ArenaTarget.LeftHorn => "Left horn",
+            ArenaTarget.RightHorn => "Right horn",
+            ArenaTarget.RaisedFist => "Raised fist",
+            _ => ""
+        };
+    }
 
     public sealed partial class RuneveilArena : MonoBehaviour
     {
         private const float BossDepth = 5.76f;
         private const float CastRange = 9f;
-        public const int WeakPointCount = 4;
-        /// <summary>弱点の部位名。添字は胸・頭・左腕・右腕の順（左右はプレイヤーから見た向き）。</summary>
-        public static readonly string[] WeakPointNames = { "chest", "head", "left arm", "right arm" };
+        public const int WeakPointCount = (int)ArenaTarget.RaisedFist - (int)ArenaTarget.Core + 1;
         private static readonly int BaseColor = Shader.PropertyToID("_BaseColor");
 
         private readonly List<UnityEngine.Object> generatedAssets = new();
-        private readonly List<HitVolume> bodyVolumes = new();
+        private readonly List<HitSurface> hitSurfaces = new();
 
         private MaterialPropertyBlock properties;
         private Transform stage;
@@ -29,9 +45,8 @@ namespace Runeveil
         private readonly Transform[] weakAnchors = new Transform[WeakPointCount];
         private readonly MeshRenderer[] weakGems = new MeshRenderer[WeakPointCount];
         private readonly MeshRenderer[] weakHalos = new MeshRenderer[WeakPointCount];
-        private readonly HitVolume[] weakVolumes = new HitVolume[WeakPointCount];
         private readonly float[] weakGlow = new float[WeakPointCount];
-        private int activeWeak;
+        private int activeWeak = -1;
         private int brokenWeak = -1;
         private float breakFlash;
         private float weakPop;
@@ -124,11 +139,12 @@ namespace Runeveil
         private Vector3 viewHead;
 
         public Transform Core { get; private set; }
-        /// <summary>今光っている弱点の部位番号。割れて次が現れるまでの間は -1。</summary>
-        public int ActiveWeakPoint => activeWeak;
         public bool HitStopping => hitStop > 0f;
 
-        public Vector3 WeakPointPosition(int part) => weakAnchors[Mathf.Max(part, 0)].position;
+        public Vector3 WeakPointPosition(ArenaTarget target) => weakAnchors[target.WeakPointIndex()].position;
+
+        internal bool CanFocus(ArenaTarget target) =>
+            target.IsWeakPoint() && (target != ArenaTarget.RaisedFist || lift >= 0.38f);
 
         public void Build()
         {
@@ -164,24 +180,20 @@ namespace Runeveil
 
         public ArenaTarget Aim(Ray ray, out Vector3 point)
         {
-            float bodyDistance = float.PositiveInfinity;
-            foreach (HitVolume volume in bodyVolumes)
+            float distance = CastRange;
+            ArenaTarget target = ArenaTarget.Miss;
+            foreach (HitSurface surface in hitSurfaces)
             {
-                float hit = volume.Intersect(ray);
-                bodyDistance = Mathf.Min(bodyDistance, hit);
+                float hit = surface.Intersect(ray, distance);
+                if (hit >= distance) continue;
+                distance = hit;
+                target = surface.Target;
             }
 
-            // 光っている弱点だけを判定する
-            float coreDistance = activeWeak >= 0 ? weakVolumes[activeWeak].Intersect(ray) : float.PositiveInfinity;
-            if (coreDistance <= CastRange && coreDistance <= bodyDistance + 0.08f)
+            if (target != ArenaTarget.Miss)
             {
-                point = ray.GetPoint(coreDistance);
-                return ArenaTarget.Core;
-            }
-            if (bodyDistance <= CastRange)
-            {
-                point = ray.GetPoint(bodyDistance);
-                return ArenaTarget.Body;
+                point = ray.GetPoint(distance);
+                return target;
             }
 
             var ground = new Plane(transform.up, transform.position);
@@ -197,19 +209,19 @@ namespace Runeveil
             return point;
         }
 
-        public void Tick(float dt, float windup, bool shield, bool won, bool coreAimed, bool staggered, bool stuck,
-            bool enraged, int weakPoint, float focusProgress = 0f, bool focusReady = false)
+        public void Tick(float dt, float windup, bool shield, bool won, ArenaTarget aimed, bool staggered, bool stuck,
+            bool enraged, ArenaTarget weakPoint, ArenaTarget shattered, float focusProgress = 0f, bool focusReady = false)
         {
             dt = Mathf.Clamp(dt, 0f, 0.05f);
-            if (weakPoint != activeWeak)
+            int weakIndex = weakPoint.WeakPointIndex();
+            if (weakIndex != activeWeak)
             {
-                // 光っていた弱点が消えたら割れる演出、新しく現れたら膨らむ演出を出す
-                if (activeWeak >= 0 && weakPoint < 0)
+                if (activeWeak >= 0 && weakIndex < 0)
                 {
-                    brokenWeak = activeWeak;
+                    brokenWeak = shattered.WeakPointIndex();
                     breakFlash = 1f;
                 }
-                activeWeak = weakPoint;
+                activeWeak = weakIndex;
                 if (activeWeak >= 0) weakPop = 1f;
             }
             breakFlash = Mathf.Max(0f, breakFlash - dt * 2.2f);
@@ -238,22 +250,26 @@ namespace Runeveil
             boss.localRotation = Quaternion.Euler(-6f * down, 1.45f * Mathf.Sin(age * 0.67f) - 9.7f * thrust,
                 2.8f + Mathf.Sin(age * 0.91f) * 0.86f + flinch * Mathf.Sin(age * 26f) * 1.9f - defeat * 7.5f - down * 3.5f);
             PoseMuse(rising, thrust);
-            TickWeakPoints(dt, rising, coreAimed, charge);
+            int aimedIndex = aimed.WeakPointIndex();
+            bool canFocus = activeWeak >= 0 && rising && CanFocus(aimed);
+            focusReady &= canFocus;
+            TickWeakPoints(dt, rising, aimedIndex, focusReady, charge);
             TickEffects(dt, shield);
-            TickFocusIndicator(rising, staggered, coreAimed, focusProgress, focusReady);
+            TickFocusIndicator(rising, staggered, aimedIndex, canFocus, focusProgress, focusReady);
         }
 
-        private void TickWeakPoints(float dt, bool rising, bool aimed, float charge)
+        private void TickWeakPoints(float dt, bool rising, int aimed, bool ready, float charge)
         {
             float pulse = 0.5f + 0.5f * Mathf.Sin(age * 3.8f);
             Color lit = Color.Lerp(Color.white, Rgb(0xffc1e5),
                 0.32f + (rising ? 0.38f * charge : 0.09f * pulse) + down * 0.3f);
-            float litHalo = 0.13f + 0.08f * pulse + (rising ? 0.19f : 0f) + down * 0.25f + (aimed ? 0.09f : 0f);
+            float litHalo = 0.13f + 0.08f * pulse + (rising ? 0.19f : 0f) + down * 0.25f;
             float litScale = 1f + pulse * 0.09f + 0.11f * lift + down * 0.3f;
             for (int i = 0; i < WeakPointCount; i++)
             {
                 // 光っていない部位は眠った暗い結晶として残し、弱点になりうる場所を見せておく
-                weakGlow[i] = Damp(weakGlow[i], i == activeWeak ? 1f : 0f, i == activeWeak ? 10f : 6f, dt);
+                bool highlighted = i == activeWeak || (i == aimed && ready);
+                weakGlow[i] = Damp(weakGlow[i], highlighted ? 1f : 0f, highlighted ? 10f : 6f, dt);
                 float glowAmount = weakGlow[i];
                 float broken = i == brokenWeak ? breakFlash : 0f;
                 float popping = i == activeWeak ? weakPop : 0f;
@@ -261,7 +277,7 @@ namespace Runeveil
                 Tint(weakGems[i], Color.Lerp(Rgb(0x5a3c50), lit, glowAmount) * Mathf.Lerp(1f, 0.36f, defeat), 1f);
                 weakGems[i].transform.localScale = Vector3.one * (1f - broken * 0.35f + popping * 0.3f);
                 Tint(weakHalos[i], Color.Lerp(Rgb(0xff6fb1), Color.white, broken),
-                    (glowAmount * litHalo + broken * 0.9f) * (1f - defeat));
+                    (glowAmount * (litHalo + (i == aimed ? ready ? 0.20f : 0.09f : 0f)) + broken * 0.9f) * (1f - defeat));
                 weakHalos[i].transform.localScale = haloSize * (litScale + broken * 1.4f + popping * 0.5f);
             }
         }
@@ -360,7 +376,7 @@ namespace Runeveil
 
             // 威力に応じて止める時間を変え、拳を止めた一撃・ダウン中の弱点・止めの一撃は長く止める
             float length = spell switch { Spell.Rock => 0.10f, Spell.Lightning => 0.05f, _ => 0.07f };
-            if (target == ArenaTarget.Core) length *= 1.3f;
+            if (target.IsWeakPoint()) length *= 1.3f;
             length *= 1f + 0.15f * (level - 1);
             if (strong) length = Mathf.Max(length, 0.16f);
             if (finalBlow) length = 0.35f;
@@ -388,15 +404,15 @@ namespace Runeveil
                 shot.Age = -1f;
                 shot.Root.gameObject.SetActive(false);
             }
-            Tick(0f, -1f, false, false, false, false, false, false, 0);
+            Tick(0f, -1f, false, false, ArenaTarget.Miss, false, false, false, ArenaTarget.Core, ArenaTarget.Miss);
             breakFlash = weakPop = 0f;
         }
 
         private void BuildFocusIndicator()
         {
-            focusIndicator = Group(stage, "Pink core gaze indicator");
-            var corners = new Geometry("Core focus corners");
-            var burst = new Geometry("Open core diamonds");
+            focusIndicator = Group(stage, "Pink weak point gaze indicator");
+            var corners = new Geometry("Weak point focus corners");
+            var burst = new Geometry("Exposed weak point diamonds");
 
             void Bar(float x, float y, float halfWidth, float halfHeight)
             {
@@ -433,20 +449,26 @@ namespace Runeveil
                 at + Vector3.up * 0.046f, at + Vector3.right * 0.038f, 0xffffff);
         }
 
-        private void TickFocusIndicator(bool warning, bool staggered, bool aimed, float progress, bool ready)
+        private void TickFocusIndicator(bool warning, bool staggered, int aimed, bool canFocus, float progress, bool ready)
         {
-            // 振り上げ中に加え、ダウン中や弱点を見ているときも、光っている弱点に枠を出して狙い先を示す
-            bool visible = (warning || staggered || aimed) && activeWeak >= 0 && defeat < 0.2f;
+            bool visible = activeWeak >= 0 && defeat < 0.2f && (warning || staggered || aimed == activeWeak);
             focusIndicator.gameObject.SetActive(visible);
             if (!visible) return;
 
-            bool chest = activeWeak == 0;
-            focusIndicator.SetPositionAndRotation(weakAnchors[activeWeak].position - boss.forward * (chest ? 0.36f : 0.25f),
+            int site = canFocus ? aimed : activeWeak;
+            var target = (ArenaTarget)((int)ArenaTarget.Core + site);
+            bool chest = target == ArenaTarget.Core;
+            focusIndicator.SetPositionAndRotation(weakAnchors[site].position - boss.forward * (chest ? 0.32f : 0.14f),
                 boss.rotation);
-            // The arc closes and grows outward at full focus. The diamonds distinguish
-            // an exposed core from a charged arc even when its colors are hard to see.
-            focusIndicator.localScale = Vector3.one * (ready ? 1.18f : 1f) * (chest ? 1f : 0.62f);
-            if (!warning) progress = 0f;
+            Vector3 scale = target switch
+            {
+                ArenaTarget.LeftHorn or ArenaTarget.RightHorn => new(0.78f, 0.9f, 1f),
+                ArenaTarget.RaisedFist => new(1.14f, 1f, 1f),
+                _ => Vector3.one
+            };
+            // The ring closes and grows at full focus, with diamonds as a second shape cue.
+            focusIndicator.localScale = scale * (ready ? 1.18f : 1f);
+            if (!canFocus) progress = 0f;
             focusCorners.enabled = !ready;
             focusBurst.enabled = ready;
             int lastSegment = ready ? focusArcPoints.Length - 1 :
@@ -1550,42 +1572,160 @@ namespace Runeveil
             }
         }
 
-        private readonly struct HitVolume
+        private sealed class HitSurface
         {
-            private readonly Transform parent;
-            private readonly Vector3 center;
-            private readonly Vector3 reciprocalRadius;
-            private readonly Quaternion inverseRotation;
+            private const int LeafSize = 8;
+            private static readonly IComparer<Triangle>[] CenterOrder = {
+                Comparer<Triangle>.Create((a, b) => a.Center.x.CompareTo(b.Center.x)),
+                Comparer<Triangle>.Create((a, b) => a.Center.y.CompareTo(b.Center.y)),
+                Comparer<Triangle>.Create((a, b) => a.Center.z.CompareTo(b.Center.z))
+            };
+            private readonly Transform part;
+            private readonly Triangle[] triangles;
+            private readonly Node[] nodes;
+            public readonly ArenaTarget Target;
 
-            public HitVolume(Transform parent, Vector3 center, Vector3 radius, Quaternion rotation)
+            public HitSurface(Transform part, Vector3[] vertices, IReadOnlyList<int> indices, ArenaTarget target)
             {
-                this.parent = parent;
-                this.center = center;
-                reciprocalRadius = new Vector3(1f / radius.x, 1f / radius.y, 1f / radius.z);
-                inverseRotation = Quaternion.Inverse(rotation);
+                this.part = part;
+                Target = target;
+                var surface = new List<Triangle>(indices.Count / 3);
+                for (int i = 0; i < indices.Count; i += 3)
+                {
+                    var triangle = new Triangle(vertices[indices[i]], vertices[indices[i + 1]], vertices[indices[i + 2]]);
+                    if (Vector3.Cross(triangle.AB, triangle.AC).sqrMagnitude > 1e-16f) surface.Add(triangle);
+                }
+                triangles = surface.ToArray();
+                var partitions = new List<Node>(Mathf.Max(1, triangles.Length / 4));
+                if (triangles.Length > 0) Partition(partitions, 0, triangles.Length);
+                nodes = partitions.ToArray();
             }
 
-            public float Intersect(Ray ray)
+            private int Partition(List<Node> partitions, int first, int count)
             {
-                Vector3 origin = Vector3.Scale(inverseRotation * (parent.InverseTransformPoint(ray.origin) - center), reciprocalRadius);
-                Vector3 direction = Vector3.Scale(inverseRotation * parent.InverseTransformVector(ray.direction), reciprocalRadius);
-                return IntersectSphere(origin, direction);
+                Bounds bounds = new Bounds(triangles[first].A, Vector3.zero);
+                for (int i = first; i < first + count; i++)
+                {
+                    Triangle triangle = triangles[i];
+                    bounds.Encapsulate(triangle.A);
+                    bounds.Encapsulate(triangle.A + triangle.AB);
+                    bounds.Encapsulate(triangle.A + triangle.AC);
+                }
+                bounds.Expand(0.0001f);
+
+                int index = partitions.Count;
+                partitions.Add(default);
+                if (count <= LeafSize)
+                {
+                    partitions[index] = new Node(bounds, first, count, 0);
+                    return index;
+                }
+
+                Vector3 size = bounds.size;
+                int axis = size.x >= size.y && size.x >= size.z ? 0 : size.y >= size.z ? 1 : 2;
+                Array.Sort(triangles, first, count, CenterOrder[axis]);
+                int half = count / 2;
+                int left = Partition(partitions, first, half);
+                int right = Partition(partitions, first + half, count - half);
+                partitions[index] = new Node(bounds, left, 0, right);
+                return index;
             }
 
-            private static float IntersectSphere(Vector3 origin, Vector3 direction)
+            public float Intersect(Ray ray, float limit)
             {
-                float a = direction.sqrMagnitude;
-                if (a < 0.00001f) return float.PositiveInfinity;
-                float b = Vector3.Dot(origin, direction);
-                float discriminant = b * b - a * (origin.sqrMagnitude - 1f);
-                if (discriminant < 0f) return float.PositiveInfinity;
-                float sqrt = Mathf.Sqrt(discriminant);
-                float near = (-b - sqrt) / a;
-                if (near >= 0f) return near;
-                float far = (-b + sqrt) / a;
-                return far >= 0f ? far : float.PositiveInfinity;
+                if (nodes.Length == 0) return limit;
+                Matrix4x4 inverse = part.worldToLocalMatrix;
+                Vector3 origin = inverse.MultiplyPoint3x4(ray.origin);
+                // Keep the original world-ray parameter when a moving limb is scaled.
+                Vector3 direction = inverse.MultiplyVector(ray.direction);
+                return IntersectNode(0, origin, direction, limit);
             }
 
+            private float IntersectNode(int index, Vector3 origin, Vector3 direction, float limit)
+            {
+                Node node = nodes[index];
+                if (!Crosses(node.Bounds, origin, direction, limit)) return limit;
+                if (node.Count == 0)
+                {
+                    limit = IntersectNode(node.First, origin, direction, limit);
+                    return IntersectNode(node.Right, origin, direction, limit);
+                }
+
+                for (int i = node.First; i < node.First + node.Count; i++)
+                    limit = triangles[i].Intersect(origin, direction, limit);
+                return limit;
+            }
+
+            private static bool Crosses(Bounds bounds, Vector3 origin, Vector3 direction, float limit)
+            {
+                Vector3 min = bounds.min;
+                Vector3 max = bounds.max;
+                float near = 0f;
+                float far = limit;
+                for (int axis = 0; axis < 3; axis++)
+                {
+                    float step = direction[axis];
+                    if (Mathf.Abs(step) < 1e-7f)
+                    {
+                        if (origin[axis] < min[axis] || origin[axis] > max[axis]) return false;
+                        continue;
+                    }
+                    float a = (min[axis] - origin[axis]) / step;
+                    float b = (max[axis] - origin[axis]) / step;
+                    near = Mathf.Max(near, Mathf.Min(a, b));
+                    far = Mathf.Min(far, Mathf.Max(a, b));
+                    if (near > far) return false;
+                }
+                return true;
+            }
+
+            private readonly struct Node
+            {
+                public readonly Bounds Bounds;
+                public readonly int First;
+                public readonly int Count;
+                public readonly int Right;
+
+                public Node(Bounds bounds, int first, int count, int right)
+                {
+                    Bounds = bounds;
+                    First = first;
+                    Count = count;
+                    Right = right;
+                }
+            }
+
+            private readonly struct Triangle
+            {
+                public readonly Vector3 A;
+                public readonly Vector3 AB;
+                public readonly Vector3 AC;
+                public Vector3 Center => A + (AB + AC) / 3f;
+
+                public Triangle(Vector3 a, Vector3 b, Vector3 c)
+                {
+                    A = a;
+                    AB = b - a;
+                    AC = c - a;
+                }
+
+                public float Intersect(Vector3 origin, Vector3 direction, float limit)
+                {
+                    Vector3 cross = Vector3.Cross(direction, AC);
+                    float determinant = Vector3.Dot(AB, cross);
+                    if (determinant <= 1e-8f) return limit;
+
+                    Vector3 relative = origin - A;
+                    float u = Vector3.Dot(relative, cross);
+                    float tolerance = 1e-5f * determinant;
+                    if (u < -tolerance || u > determinant + tolerance) return limit;
+                    Vector3 perpendicular = Vector3.Cross(relative, AB);
+                    float v = Vector3.Dot(direction, perpendicular);
+                    if (v < -tolerance || u + v > determinant + tolerance) return limit;
+                    float distance = Vector3.Dot(AC, perpendicular) / determinant;
+                    return distance >= 0f ? Mathf.Min(distance, limit) : limit;
+                }
+            }
         }
 
         private sealed class Geometry
@@ -1617,7 +1757,7 @@ namespace Runeveil
 
             public Geometry(string name) => Name = name;
 
-            public Mesh CreateMesh()
+            public Mesh CreateMesh(bool keepReadable = false)
             {
                 var mesh = new Mesh { name = Name };
                 if (vertices.Count > ushort.MaxValue) mesh.indexFormat = IndexFormat.UInt32;
@@ -1626,7 +1766,7 @@ namespace Runeveil
                 mesh.SetUVs(0, uv);
                 mesh.SetColors(colors);
                 mesh.SetTriangles(indices, 0);
-                mesh.UploadMeshData(true);
+                if (!keepReadable) mesh.UploadMeshData(true);
                 return mesh;
             }
 
