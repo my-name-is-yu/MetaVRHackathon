@@ -9,6 +9,12 @@ namespace Runeveil
     {
         private const float MuseAtlasSize = 1254f;
         private const float MuseScale = 0.00340f;
+        private const float MuseStrikeSeconds = 0.48f;
+        private const float MuseHeavyStrikeSeconds = 0.78f;
+        private Transform museBody;
+        private Transform museHead;
+        private float coil;
+        private bool heavyImpact;
         private Transform thornWind;
         private MeshRenderer thornRenderer;
         public Transform MuseEyes { get; private set; }
@@ -28,6 +34,11 @@ namespace Runeveil
             Render(stage, contact, shadow);
 
             boss = Group(stage, "Dark Muse");
+            museBody = Group(boss, "Muse upper body");
+            museHead = Group(museBody, "Muse head pivot");
+            museHead.localPosition = new Vector3(0f, 2.13f, 0f);
+            Transform headArtwork = Group(museHead, "Muse head artwork");
+            headArtwork.localPosition = -museHead.localPosition;
             Shader surface = Resources.Load<Shader>("Runeveil/MuseSurface");
             Texture2D back = Resources.Load<Texture2D>("Runeveil/MuseBack");
             Material Plush(string label, string front)
@@ -39,8 +50,10 @@ namespace Runeveil
             }
             Material plush = Plush("Muse front and back study", "Runeveil/MuseFront");
             Material paw = Plush("Muse clenched paws", "Runeveil/MuseAttack");
+            Material face = Track(new Material(plush) { name = "Muse face" });
+            ConfigureMuseCleansing(plush, paw, face);
 
-            MuseForm(boss, plush, "Round plum plush torso", new(627, 853), new Vector2[] {
+            MuseForm(museBody, plush, "Round plum plush torso", new(627, 853), new Vector2[] {
                 new(625, 548), new(742, 560), new(824, 578), new(881, 602), new(914, 653), new(922, 722),
                 new(936, 772), new(952, 827), new(950, 910), new(936, 970), new(908, 1026), new(853, 1067),
                 new(779, 1086), new(698, 1090), new(631, 1095), new(553, 1093), new(467, 1089), new(397, 1069),
@@ -48,7 +61,7 @@ namespace Runeveil
                 new(335, 661), new(351, 609), new(423, 572), new(512, 549)
             }, p => MusePoint(p, 0.043f), new(0.865f, 0.777f), faces: 24);
 
-            MuseForm(boss, plush, "Cream face and swept plum head", new(625, 417), new Vector2[] {
+            MuseForm(headArtwork, face, "Cream face and swept plum head", new(625, 417), new Vector2[] {
                 new(617, 166), new(677, 166), new(734, 178), new(786, 216), new(835, 256), new(878, 306),
                 new(908, 349), new(933, 391), new(934, 432), new(951, 477), new(940, 509), new(931, 557),
                 new(908, 596), new(874, 620), new(808, 637), new(740, 647), new(669, 652), new(616, 658),
@@ -60,14 +73,14 @@ namespace Runeveil
                     ? 0.067f * MuseBump(p, new(638, 284), new(77, 61)) + 0.022f * MuseBump(p, new(629, 515), new(183, 70))
                     : 0.103f * MuseBump(p, new(625, 322), new(81, 69)),
                 faces: 28);
-            MuseEyes = Group(boss, "Muse eye midpoint");
+            MuseEyes = Group(headArtwork, "Muse eye midpoint");
             MuseEyes.localPosition = MusePoint(new(628, 418), -0.93f);
             for (int side = -1; side <= 1; side += 2)
             {
                 Transform eye = Group(MuseEyes, side < 0 ? "Left glowing eye" : "Right glowing eye");
                 eye.localPosition = MusePoint(new(628 + side * 96, 425), -0.887f) - MuseEyes.localPosition;
                 BuildMuseLeg(plush, side);
-                BuildMuseHorn(plush, side);
+                BuildMuseHorn(headArtwork, plush, side);
             }
 
             BuildMuseGem();
@@ -80,23 +93,47 @@ namespace Runeveil
             var warning = new Geometry("Warning arcs on Muse's raised paw");
             warning.Tube(Arc(Vector3.zero, 0.53f, 0.55f, 105f, 246f, 23), 0.018f, 0xffb767);
             warning.Tube(Arc(Vector3.back * 0.022f, 0.62f, 0.64f, 113f, 254f, 24), 0.009f, 0xffebac);
-            warningArcs = Render(boss, warning, glow);
+            warningArcs = Render(museBody, warning, glow);
         }
 
         private void PoseMuse(bool rising, float thrust, bool heavyStrike, bool wardReleaseWindow)
         {
-            // ダウン中は倒れたときと同じ向きに腕を落とす（倒れたときほどは落とさない）
-            float sag = defeat + down * 0.6f;
-            attackArm.Pose(new Vector3(1.20f + lift * 0.14f - thrust * 0.04f,
-                    2.20f + lift * 0.30f - thrust * 0.53f - sag * 0.38f, -0.03f - thrust * 0.57f),
-                new Vector3(1.49f + lift * 0.11f - thrust * 0.30f,
-                    2.78f + lift * 0.59f - thrust * 1.49f - sag * 1.43f, -0.43f - lift * 0.08f - thrust * 0.68f),
-                new Vector3(6f + 9f * lift - 48f * thrust, -8.5f - thrust * 11f, -12f + 4f * lift + 25f * thrust));
-            anchorArm.Pose(new Vector3(-1.11f, 1.39f + lift * 0.07f, -0.12f - lift * 0.06f),
-                new Vector3(-1.34f - lift * 0.04f, 1.19f + lift * 0.08f + sag * 0.15f, -0.61f - lift * 0.06f),
-                new Vector3(0f + 6f * lift, 11f - 16f * sag, -12f));
+            float raised = lift * (1f - thrust);
+            float heavyRaise = heavyStrike ? raised : 0f;
+            float heavyThrust = heavyStrike ? thrust : 0f;
+            float idle = 1f - down;
+            var bodyOffset = new Vector3(-0.13f * coil - 0.07f * raised + 0.10f * thrust,
+                Mathf.Sin(age * 1.2f) * 0.019f * idle - 0.23f * coil - 0.07f * thrust - 0.13f * heavyThrust,
+                -0.12f * thrust);
+            var bodyEuler = new Vector3(4f * raised - 7f * thrust - 11f * heavyThrust,
+                1.45f * Mathf.Sin(age * 0.67f) * idle - 6f * raised - 6f * heavyRaise + 12f * thrust,
+                2.8f + 0.86f * Mathf.Sin(age * 0.91f) * idle + 8f * coil + 3f * raised - 6f * thrust);
+            var bodyScale = new Vector3(1f + 0.06f * coil, 1f - 0.055f * coil - 0.05f * heavyThrust, 1f);
+            var headEuler = new Vector3(-6f * coil - 3f * raised + 5f * thrust, 3f * raised, -3f * raised);
+            ApplyMuseBodyReaction(ref bodyOffset, ref bodyEuler, ref bodyScale, ref headEuler);
+            museBody.SetLocalPositionAndRotation(bodyOffset, Quaternion.Euler(bodyEuler));
+            museBody.localScale = bodyScale;
+            museHead.localRotation = Quaternion.Euler(headEuler);
 
-            bool showWarning = rising && defeat < 0.13f;
+            Vector3 attackElbow = new(1.24f + 0.19f * raised - 0.08f * thrust,
+                1.98f + 0.57f * raised + 0.18f * heavyRaise - 0.19f * coil - 0.40f * thrust,
+                -0.05f + 0.12f * raised - 0.46f * thrust);
+            Vector3 attackWrist = new(1.45f + 0.26f * raised - 0.26f * thrust,
+                2.39f + 0.94f * raised + 0.39f * heavyRaise - 0.61f * coil - 0.91f * thrust - 0.33f * heavyThrust,
+                -0.42f + 0.15f * raised - 0.72f * thrust + 0.13f * heavyThrust);
+            Vector3 attackFist = new(6f + 11f * raised - 42f * thrust - 12f * heavyThrust,
+                -8.5f - 14f * thrust, -12f + 10f * raised + 30f * thrust);
+            ApplyMuseArmReaction(true, ref attackElbow, ref attackWrist, ref attackFist);
+            attackArm.Pose(attackElbow, attackWrist, attackFist);
+
+            Vector3 anchorElbow = new(-1.11f - 0.05f * coil, 1.39f + 0.11f * raised, -0.12f + 0.12f * thrust);
+            Vector3 anchorWrist = new(-1.34f - 0.13f * coil, 1.19f + 0.14f * raised - 0.16f * heavyThrust,
+                -0.61f - 0.08f * raised + 0.21f * thrust);
+            Vector3 anchorFist = new(6f * raised, 11f + 8f * thrust, -12f);
+            ApplyMuseArmReaction(false, ref anchorElbow, ref anchorWrist, ref anchorFist);
+            anchorArm.Pose(anchorElbow, anchorWrist, anchorFist);
+
+            bool showWarning = rising && defeat < 0.13f && (!heavyStrike || raised >= 0.16f);
             warningArcs.gameObject.SetActive(showWarning);
             if (showWarning)
             {
@@ -125,7 +162,7 @@ namespace Runeveil
                 p => MusePoint(Mirror(p), 0.025f), new(0.62f, 0.52f), frontPixel: Mirror, backPixel: p => OtherSide(Mirror(p)));
         }
 
-        private void BuildMuseHorn(Material plush, int side)
+        private void BuildMuseHorn(Transform headArtwork, Material plush, int side)
         {
             Vector2 Mirror(Vector2 p) => side < 0 ? p : OtherSide(p);
             var outline = new Vector2[] {
@@ -136,16 +173,16 @@ namespace Runeveil
             };
             // Left and right are named from the Muse's perspective.
             ArenaTarget target = side < 0 ? ArenaTarget.RightHorn : ArenaTarget.LeftHorn;
-            MuseForm(boss, plush, target.DisplayName() + " (cracked crystal horn)",
+            MuseForm(headArtwork, plush, target.DisplayName() + " (cracked crystal horn)",
                 new(407, 209), outline, p => MusePoint(Mirror(p), -0.07f), new(0.47f, 0.43f),
                 frontPixel: Mirror, backPixel: p => OtherSide(Mirror(p)),
                 relief: (p, _) => 0.035f * MuseBump(p, new(386, 206), new(37, 75)), faces: 12, outlineSteps: 1, target: target);
-            AddWeakGem(target, boss, target.DisplayName() + " crystal", MusePoint(Mirror(new(407, 209)), -0.56f));
+            AddWeakGem(target, headArtwork, target.DisplayName() + " crystal", MusePoint(Mirror(new(407, 209)), -0.56f));
         }
 
         private void BuildMuseGem()
         {
-            Core = Group(boss, "Pink chest crystal");
+            Core = Group(museBody, "Pink chest crystal");
             Core.localPosition = MusePoint(new(632, 783), -0.822f);
             BuildWeakGem(ArenaTarget.Core, Core, "Faceted rose crystal", 1f);
         }
@@ -197,9 +234,9 @@ namespace Runeveil
         {
             bool raised = side > 0;
             var arm = new Arm(new Vector3(side * 0.92f, 1.72f, 0.04f),
-                Group(boss, raised ? "Raised upper arm" : "Resting upper arm"),
-                Group(boss, raised ? "Raised forearm" : "Resting forearm"),
-                Group(boss, raised ? "Raised plush fist" : "Resting plush fist"));
+                Group(museBody, raised ? "Raised upper arm" : "Resting upper arm"),
+                Group(museBody, raised ? "Raised forearm" : "Resting forearm"),
+                Group(museBody, raised ? "Raised plush fist" : "Resting plush fist"));
             void Segment(Transform part, string name, Vector2 center, Vector2[] outline)
             {
                 MuseForm(part, plush, name, center, outline, p =>
@@ -314,7 +351,7 @@ namespace Runeveil
 
         private void BuildThornWind(Shader shader)
         {
-            thornWind = Group(boss, "Magenta thorn wisps");
+            thornWind = Group(museBody, "Magenta thorn wisps");
             Material streak = CreateMaterial(shader, "Magenta wisp surface", 0.12f, 0f);
             streak.SetFloat("_Cull", (float)CullMode.Off);
             var ribbons = new Geometry("Pointed magenta wisps and floating fragments");

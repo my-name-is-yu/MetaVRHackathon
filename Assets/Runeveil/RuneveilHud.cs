@@ -10,7 +10,6 @@ namespace Runeveil
         private const float PanelDistance = 1.65f;
         private const float SpatialScale = 0.00082f;
         private const int BossBarWidth = 416;
-        private const float VictoryFadeSeconds = 0.70f;
 
         private static readonly Color32 Ink = new Color32(36, 26, 46, 244);
         private static readonly Color32 Tile = new Color32(56, 41, 64, 255);
@@ -36,7 +35,6 @@ namespace Runeveil
         private RectTransform action;
         private RectTransform notice;
         private CanvasGroup victoryIllustration;
-        private float victoryFadeElapsed;
         private Image actionFill;
         private Text actionText;
         private Text bossHpText;
@@ -165,29 +163,13 @@ namespace Runeveil
             noticeText.text = status ?? "";
         }
 
-        public void SetVictoryIllustration(bool won, float deltaTime)
+        public void SetVictoryIllustration(float blend)
         {
-            if (victoryIllustration == null)
-                return;
-
-            if (!won)
-            {
-                if (!victoryIllustration.gameObject.activeSelf)
-                    return;
-
-                victoryIllustration.gameObject.SetActive(false);
-                victoryFadeElapsed = 0f;
-                victoryIllustration.alpha = 0f;
-                return;
-            }
-
-            if (!victoryIllustration.gameObject.activeSelf)
-                victoryIllustration.gameObject.SetActive(true);
-            if (victoryFadeElapsed >= VictoryFadeSeconds)
-                return;
-
-            victoryFadeElapsed = Mathf.Min(VictoryFadeSeconds, victoryFadeElapsed + Mathf.Clamp(deltaTime, 0f, 0.1f));
-            victoryIllustration.alpha = Mathf.SmoothStep(0f, 1f, victoryFadeElapsed / VictoryFadeSeconds);
+            if (victoryIllustration == null) return;
+            bool visible = blend > 0f;
+            if (victoryIllustration.gameObject.activeSelf != visible)
+                victoryIllustration.gameObject.SetActive(visible);
+            victoryIllustration.alpha = blend;
         }
 
         public void SetControlHint(string hint)

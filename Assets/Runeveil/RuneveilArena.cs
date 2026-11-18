@@ -71,7 +71,6 @@ namespace Runeveil
         private float age;
         private float lift;
         private float slam;
-        private float flinch;
         private float defeat;
         private float down;
         private float pin;
@@ -173,6 +172,9 @@ namespace Runeveil
             BuildCourtyard();
             BuildValleyRidges(shader);
             BuildMuse(shader);
+#if UNITY_EDITOR
+            BuildMuseRigPrototype();
+#endif
             BuildEffects();
             BuildFocusIndicator();
             ResetArena();
@@ -182,12 +184,20 @@ namespace Runeveil
         {
             float distance = CastRange;
             ArenaTarget target = ArenaTarget.Miss;
-            foreach (HitSurface surface in hitSurfaces)
+#if UNITY_EDITOR
+            if (museRigPrototype != null)
+                target = museRigPrototype.Aim(ray, ref distance);
+            else
+#endif
+            if (boss != null && boss.gameObject.activeSelf)
             {
-                float hit = surface.Intersect(ray, distance);
-                if (hit >= distance) continue;
-                distance = hit;
-                target = surface.Target;
+                foreach (HitSurface surface in hitSurfaces)
+                {
+                    float hit = surface.Intersect(ray, distance);
+                    if (hit >= distance) continue;
+                    distance = hit;
+                    target = surface.Target;
+                }
             }
 
             if (target != ArenaTarget.Miss)
@@ -204,7 +214,10 @@ namespace Runeveil
         /// <summary>弱点を狙えていないときの着弾点。プレイヤーから胴体の中心へ向けた線が当たる位置を返す。</summary>
         public Vector3 BodyPoint(Vector3 from)
         {
-            Vector3 center = boss.TransformPoint(MusePoint(new Vector2(626, 900), 0f));
+            Vector3 center = museBody.TransformPoint(MusePoint(new Vector2(626, 900), 0f));
+#if UNITY_EDITOR
+            if (museRigPrototype != null) center = museRigPrototype.BodyCenter;
+#endif
             Aim(new Ray(from, center - from), out Vector3 point);
             return point;
         }
@@ -232,29 +245,43 @@ namespace Runeveil
             float bossDt = hitStop > 0f ? 0f : dt;
             hitStop = Mathf.Max(0f, hitStop - dt);
             age += bossDt;
+#if UNITY_EDITOR
+            if (museRigPrototype == null)
+#endif
+            TickMuseCleansing(bossDt, won);
             slam = Mathf.Max(0f, slam - bossDt);
-            flinch = Mathf.Max(0f, flinch - 2.25f * bossDt);
             defeat = Damp(defeat, won ? 1f : 0f, 3.8f, bossDt);
-            down = Damp(down, staggered && !won ? 1f : 0f, staggered ? 9f : 4f, bossDt);
+            TickMuseReactions(bossDt, staggered, won);
             pin = Damp(pin, stuck && !won ? 1f : 0f, stuck ? 14f : 5f, bossDt);
             rage = Damp(rage, enraged && !won ? 1f : 0f, 3f, bossDt);
             bool rising = windup >= 0f && !won;
             float charge = Mathf.Clamp01(windup);
             lift = Damp(lift, rising ? Mathf.SmoothStep(0f, 1f, charge / 0.72f) : 0f, rising ? 7.8f : 6f, bossDt);
-            float thrust = slam > 0f ? Mathf.Sin(Mathf.PI * Mathf.Min(0.98f, (1f - slam / 0.52f) * 1.46f)) * (1f - defeat) : 0f;
-            // バリアに防がれた拳は硬直が終わるまで振り下ろした位置に残す
-            thrust = Mathf.Max(thrust, pin * (1f - defeat));
-            // 受けた側として横にだけ震わせる。残り時間に比例させて大→小に収束させる
-            float shake = Mathf.Sin(hitStop * 160f) * hitStop * 0.45f;
-            boss.localPosition = new Vector3(shake,
-                Mathf.Sin(age * 1.2f) * 0.019f - defeat * 0.59f - down * 0.30f - thrust * 0.10f, BossDepth);
-            boss.localRotation = Quaternion.Euler(-6f * down, 1.45f * Mathf.Sin(age * 0.67f) - 9.7f * thrust,
-                2.8f + Mathf.Sin(age * 0.91f) * 0.86f + flinch * Mathf.Sin(age * 26f) * 1.9f - defeat * 7.5f - down * 3.5f);
-            PoseMuse(rising, thrust, heavyStrike, wardReleaseWindow);
+            float coilTarget = rising && heavyStrike ? Mathf.Sin(Mathf.PI * Mathf.Clamp01(charge / 0.34f)) : 0f;
+            coil = Damp(coil, coilTarget, 16f, bossDt);
+
+            float strikeDuration = heavyImpact ? MuseHeavyStrikeSeconds : MuseStrikeSeconds;
+            float dropDuration = heavyImpact ? 0.18f : 0.13f;
+            float elapsed = strikeDuration - slam;
+            float drop = Mathf.SmoothStep(0f, 1f, elapsed / dropDuration);
+            float release = Mathf.SmoothStep(1f, 0f, (elapsed - dropDuration) / (strikeDuration - dropDuration));
+            // Ward holds the same contact pose until the fist comes free.
+            float thrust = Mathf.Max(drop * release, pin) * (1f - defeat);
+            bool heavyPose = rising ? heavyStrike : heavyImpact && (slam > 0f || pin > 0.001f);
+#if UNITY_EDITOR
+            if (museRigPrototype != null)
+                TickMuseRigPrototype(bossDt, windup, won, staggered, stuck, heavyStrike, wardReleaseWindow);
+            else
+#endif
+            PoseMuse(rising, thrust, heavyPose, wardReleaseWindow);
             int aimedIndex = aimed.WeakPointIndex();
             bool canFocus = activeWeak >= 0 && rising && CanFocus(aimed);
             focusReady &= canFocus;
             TickWeakPoints(dt, rising, aimedIndex, focusReady, charge);
+#if UNITY_EDITOR
+            if (museRigPrototype == null)
+#endif
+            PoseMuseCleansing(museHead);
             TickEffects(dt, shield);
             TickFocusIndicator(rising, staggered, aimedIndex, canFocus, focusProgress, focusReady);
         }
@@ -382,18 +409,34 @@ namespace Runeveil
             if (strong) length = Mathf.Max(length, 0.16f);
             if (finalBlow) length = 0.35f;
             hitStop = Mathf.Max(hitStop, length);
-            flinch = strong ? 1f : Mathf.Max(flinch, Mathf.Min(1f, 0.33f + 0.15f * (level - 1)));
+            if (!finalBlow)
+            {
+                RecordMuseReaction(target, strong, level);
+#if UNITY_EDITOR
+                museRigPrototype?.BeginReaction(target, strong, level);
+#endif
+            }
         }
 
-        public void Impact(bool blocked)
+        public void Impact(bool blocked, bool heavyStrike)
         {
-            slam = 0.52f;
+            heavyImpact = heavyStrike;
+            slam = heavyStrike ? MuseHeavyStrikeSeconds : MuseStrikeSeconds;
             if (blocked) wardFlashTime = 1f;
+#if UNITY_EDITOR
+            museRigPrototype?.BeginStrike(heavyStrike);
+#endif
         }
 
         public void ResetArena()
         {
-            age = lift = slam = flinch = defeat = down = pin = rage = hitStop = wardFlashTime = wardOpacity = 0f;
+            age = lift = coil = slam = defeat = pin = rage = hitStop = wardFlashTime = wardOpacity = 0f;
+            heavyImpact = false;
+            boss.localPosition = Vector3.forward * BossDepth;
+            ResetMuseReactions();
+#if UNITY_EDITOR
+            museRigPrototype?.Reset();
+#endif
             breakFlash = weakPop = 0f;
             brokenWeak = -1;
             activeWeak = -1;
@@ -1513,6 +1556,7 @@ namespace Runeveil
             public readonly Transform Upper;
             public readonly Transform Lower;
             public readonly Transform Fist;
+            public Vector3 Elbow { get; private set; }
 
             public Arm(Vector3 shoulder, Transform upper, Transform lower, Transform fist)
             {
@@ -1524,6 +1568,7 @@ namespace Runeveil
 
             public void Pose(Vector3 elbow, Vector3 wrist, Vector3 fistEuler)
             {
+                Elbow = elbow;
                 PlaceSegment(Upper, shoulder, elbow, 0.55f, 0.51f);
                 PlaceSegment(Lower, elbow, wrist, 0.43f, 0.47f);
                 Fist.SetLocalPositionAndRotation(wrist, Quaternion.Euler(fistEuler));

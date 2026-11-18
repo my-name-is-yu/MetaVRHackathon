@@ -289,7 +289,7 @@ namespace Runeveil
             }
             hud.Render(duel.BossHealth, duel.Hearts, duel.Shield, focus, spellLabel, status,
                 duel.Phase == DuelPhase.Practice, action, usingXr);
-            hud.SetVictoryIllustration(duel.Phase == DuelPhase.Won, Time.unscaledDeltaTime);
+            hud.SetVictoryIllustration(arena.MuseVictoryPortraitBlend);
             hud.SetControlHint(!usingXr && !preview ? "Connect a headset to draw and aim" : null);
             hud.SetActionFocus(usingXr ? menuActionRay : mousePointer);
             hud.SetHand(handPosition);
@@ -365,11 +365,12 @@ namespace Runeveil
         void AdvanceDuel(float deltaTime)
         {
             int heartsBefore = duel.Hearts;
+            bool heavyStrike = duel.HeavyStrike;
             var impact = duel.Step(deltaTime, MustWaitForLightning());
             if (impact == AttackResult.None) return;
 
             bool blocked = impact == AttackResult.Blocked;
-            arena.Impact(blocked);
+            arena.Impact(blocked, heavyStrike);
             if (blocked) Notify("Ward blocked the strike. Counterattack now");
             else if (duel.Phase == DuelPhase.Lost) ShowResult("Defeated");
             else if (heartsBefore - duel.Hearts == 2) Notify("Heavy strike! You lost 2 hearts");
@@ -440,7 +441,7 @@ namespace Runeveil
             ClearCharge();
             duel.StartBattle();
             arena.ResetArena();
-            hud.SetVictoryIllustration(false, 0f);
+            hud.SetVictoryIllustration(0f);
             spellLabel = "";
             resultSummary = "";
             Notify("Duel started");
