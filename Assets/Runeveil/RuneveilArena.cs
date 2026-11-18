@@ -17,7 +17,7 @@ namespace Runeveil
 
         public static string DisplayName(this ArenaTarget target) => target switch
         {
-            ArenaTarget.Core => "Crystal core",
+            ArenaTarget.Core => "Chest crystal",
             ArenaTarget.RightHand => "Right hand",
             ArenaTarget.LeftHorn => "Left horn",
             ArenaTarget.RightHorn => "Right horn",
@@ -251,11 +251,11 @@ namespace Runeveil
             int aimedIndex = aimed.WeakPointIndex();
             bool canFocus = activeWeak >= 0 && rising && CanFocus(aimed);
             focusReady &= canFocus;
-            TickWeakPoints(dt, rising, aimedIndex, focusReady, charge);
+            TickWeakPoints(dt, rising, aimedIndex, focusReady, charge, won);
             if (museRig == null)
                 PoseMuseCleansing(museHead);
             TickEffects(dt, shield);
-            TickFocusIndicator(rising, staggered, aimedIndex, canFocus, focusProgress, focusReady);
+            TickFocusIndicator(rising, staggered, aimedIndex, canFocus, focusProgress, focusReady, won);
         }
 
         private void TickFallbackMuse(float dt, bool won, bool stuck, bool heavyStrike, bool wardReleaseWindow,
@@ -278,27 +278,35 @@ namespace Runeveil
             PoseMuse(rising, thrust, heavyPose, wardReleaseWindow);
         }
 
-        private void TickWeakPoints(float dt, bool rising, int aimed, bool ready, float charge)
+        private void TickWeakPoints(float dt, bool rising, int aimed, bool ready, float charge, bool won)
         {
+            if (museRig != null)
+            {
+                TickRigWeakPointCues(aimed, ready, won);
+                return;
+            }
+
             float pulse = 0.5f + 0.5f * Mathf.Sin(age * 3.8f);
             Color lit = Color.Lerp(Color.white, Rgb(0xffc1e5),
                 0.32f + (rising ? 0.38f * charge : 0.09f * pulse) + down * 0.3f);
             float litHalo = 0.13f + 0.08f * pulse + (rising ? 0.19f : 0f) + down * 0.25f;
             float litScale = 1f + pulse * 0.09f + 0.11f * lift + down * 0.3f;
+            int selected = ready ? aimed : activeWeak;
             for (int i = 0; i < WeakPointCount; i++)
             {
-                // 光っていない部位は眠った暗い結晶として残し、弱点になりうる場所を見せておく
-                bool highlighted = i == activeWeak || (i == aimed && ready);
-                weakGlow[i] = Damp(weakGlow[i], highlighted ? 1f : 0f, highlighted ? 10f : 6f, dt);
+                bool highlighted = !won && i == selected;
+                weakGlow[i] = highlighted ? Damp(weakGlow[i], 1f, 10f, dt) : 0f;
                 float glowAmount = weakGlow[i];
-                float broken = i == brokenWeak ? breakFlash : 0f;
+                float broken = !won && i == brokenWeak ? breakFlash : 0f;
                 float popping = i == activeWeak ? weakPop : 0f;
                 Vector3 haloSize = i == 0 ? new Vector3(0.64f, 0.81f, 1f) : new Vector3(0.42f, 0.53f, 1f);
                 if (weakGems[i] != null)
                 {
+                    weakGems[i].enabled = highlighted;
                     Tint(weakGems[i], Color.Lerp(Rgb(0x5a3c50), lit, glowAmount) * Mathf.Lerp(1f, 0.36f, defeat), 1f);
                     weakGems[i].transform.localScale = Vector3.one * (1f - broken * 0.35f + popping * 0.3f);
                 }
+                weakHalos[i].enabled = highlighted || broken > 0f;
                 Tint(weakHalos[i], Color.Lerp(Rgb(0xff6fb1), Color.white, broken),
                     (glowAmount * (litHalo + (i == aimed ? ready ? 0.20f : 0.09f : 0f)) + broken * 0.9f) * (1f - defeat));
                 weakHalos[i].transform.localScale = haloSize * (litScale + broken * 1.4f + popping * 0.5f);
@@ -484,28 +492,39 @@ namespace Runeveil
                 at + Vector3.up * 0.046f, at + Vector3.right * 0.038f, 0xffffff);
         }
 
-        private void TickFocusIndicator(bool warning, bool staggered, int aimed, bool canFocus, float progress, bool ready)
+        private void TickFocusIndicator(bool warning, bool staggered, int aimed, bool canFocus, float progress, bool ready, bool won)
         {
-            bool visible = activeWeak >= 0 && defeat < 0.2f && (warning || staggered || aimed == activeWeak);
+            bool visible = !won && activeWeak >= 0 && defeat < 0.2f && (warning || staggered || aimed == activeWeak);
             focusIndicator.gameObject.SetActive(visible);
             if (!visible) return;
 
             int site = canFocus ? aimed : activeWeak;
-            var target = (ArenaTarget)((int)ArenaTarget.Core + site);
-            bool chest = target == ArenaTarget.Core;
-            focusIndicator.SetPositionAndRotation(weakAnchors[site].position - boss.forward * (chest ? 0.32f : 0.14f),
-                boss.rotation);
-            Vector3 scale = target switch
+            bool hasRigCue = museRig != null && (ready || site == activeWeak);
+            bool chestCue = hasRigCue && site == ArenaTarget.Core.WeakPointIndex();
+            if (hasRigCue)
             {
-                ArenaTarget.LeftHorn or ArenaTarget.RightHorn => new(0.78f, 0.9f, 1f),
-                ArenaTarget.RaisedFist => new(1.14f, 1f, 1f),
-                _ => Vector3.one
-            };
-            // The ring closes and grows at full focus, with diamonds as a second shape cue.
-            focusIndicator.localScale = scale * (ready ? 1.18f : 1f);
+                Transform cue = rigWeakPointCues[site].Root;
+                focusIndicator.SetPositionAndRotation(cue.position - cue.forward * 0.01f, cue.rotation);
+                Vector3 scale = chestCue ? new Vector3(0.72f, 1.10f, 1f) : Vector3.one * 1.32f;
+                focusIndicator.localScale = scale * RigWeakPointScale(site);
+            }
+            else
+            {
+                var target = (ArenaTarget)((int)ArenaTarget.Core + site);
+                bool chest = target == ArenaTarget.Core;
+                focusIndicator.SetPositionAndRotation(weakAnchors[site].position - boss.forward * (chest ? 0.32f : 0.14f),
+                    boss.rotation);
+                Vector3 scale = target switch
+                {
+                    ArenaTarget.LeftHorn or ArenaTarget.RightHorn => new(0.78f, 0.9f, 1f),
+                    ArenaTarget.RaisedFist => new(1.14f, 1f, 1f),
+                    _ => Vector3.one
+                };
+                focusIndicator.localScale = scale * (ready ? 1.18f : 1f);
+            }
             if (!canFocus) progress = 0f;
-            focusCorners.enabled = !ready;
-            focusBurst.enabled = ready;
+            focusCorners.enabled = museRig == null && !ready;
+            focusBurst.enabled = museRig == null && ready;
             int lastSegment = ready ? focusArcPoints.Length - 1 :
                 Mathf.FloorToInt(Mathf.Clamp01(progress) * (focusArcPoints.Length - 1));
             focusArc.enabled = lastSegment > 0;
@@ -518,9 +537,10 @@ namespace Runeveil
                 for (int i = 0; i <= lastSegment; i++) focusArc.SetPosition(i, focusArcPoints[i]);
             }
 
-            focusArc.startWidth = ready ? 0.026f : 0.016f;
+            focusArc.startWidth = ready && !chestCue ? 0.026f : 0.016f;
             focusArc.endWidth = focusArc.startWidth;
-            Tint(focusArc, Rgb(ready ? 0xffd4f1 : 0xff8ad6), ready ? 0.98f : 0.78f);
+            if (chestCue) Tint(focusArc, Rgb(0xffcb91), ready ? 0.65f : 0.52f);
+            else Tint(focusArc, Rgb(ready ? 0xffd4f1 : 0xff8ad6), ready ? 0.98f : 0.78f);
         }
 
         private void OnDestroy()

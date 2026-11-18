@@ -36,7 +36,7 @@ namespace Runeveil
 #if UNITY_EDITOR
         [SerializeField] bool desktopPreviewInEditor;
         [Header("Debug (Editor only)")]
-        [Tooltip("XR only. Treat the eye gaze as always on the glowing weak point, and accept a short pinch as " +
+        [Tooltip("XR only. Treat the eye gaze as always on the marked weak point, and accept a short pinch as " +
             "Start duel / Fight again without looking at the button.")]
         [SerializeField] bool assumeGazeOnTarget;
 #endif
@@ -263,8 +263,10 @@ namespace Runeveil
             bool wardReleaseWindow = duel.WindupSecondsLeft > releaseGrace &&
                 duel.WindupSecondsLeft <= WardCueSeconds;
             if (Debug.isDebugBuild) ReportInputs(!assumed && spellRay.HasValue);
+            ArenaTarget activeWeakPoint = duel.Finished ? ArenaTarget.Miss : duel.WeakPoint;
+            ArenaTarget shatteredPoint = duel.Finished ? ArenaTarget.Miss : duel.ShatteredPoint;
             arena.Tick(deltaTime, duel.Windup, duel.Shield, duel.Phase == DuelPhase.Won, target,
-                duel.Stagger > 0, duel.Stuck > 0, duel.Enraged, duel.WeakPoint, duel.ShatteredPoint,
+                duel.Stagger > 0, duel.Stuck > 0, duel.Enraged, activeWeakPoint, shatteredPoint,
                 duel.FocusProgress, duel.FocusReady, duel.HeavyStrike, wardReleaseWindow);
             arena.SetCharge(chargedSpell, chargeLevel, chargeAnchor, view.transform.position, deltaTime);
             UpdateDrawingFeedback(deltaTime);
@@ -287,7 +289,8 @@ namespace Runeveil
                 string heading = duel.Finished ? resultSummary : "HEAD AIM · MENU ONLY";
                 status = heading + "\nPoint your head at the button and pinch.";
             }
-            hud.Render(duel.BossHealth, duel.Hearts, duel.Shield, focus, spellLabel, status,
+            ArenaTarget markedWeakPoint = duel.ExposedTarget.IsWeakPoint() ? duel.ExposedTarget : activeWeakPoint;
+            hud.Render(duel.BossHealth, duel.Hearts, duel.Shield, markedWeakPoint.DisplayName(), focus, spellLabel, status,
                 duel.Phase == DuelPhase.Practice, action, usingXr);
             hud.SetVictoryIllustration(arena.MuseVictoryPortraitBlend);
             hud.SetControlHint(!usingXr && !preview ? "Connect a headset to draw and aim" : null);
@@ -396,9 +399,9 @@ namespace Runeveil
             if (duel.Finished) return resultSummary;
             if (usingXr && duel.Phase != DuelPhase.Battle && !string.IsNullOrEmpty(gazeHint)) return gazeHint;
             if (usingXr && !handPosition.HasValue) return "Bring a hand into view, then pinch";
-            if (duel.Stagger > 0) return "The Muse is down! Strike the glowing weak point";
+            if (duel.Stagger > 0) return "The Muse is down! Strike the marked weak point";
             if (duel.WardCounterActive)
-                return canAim ? "Counterattack the glowing paw" : "Cast while the paw is stuck";
+                return canAim ? "Counterattack the marked fist" : "Cast while the paw is stuck";
             if (duel.FocusReady) return "Release an attack rune at the exposed part";
             if (duel.Windup >= 0)
                 return canAim ? "Release Ward when the arcs flare, or hit a weak point with Lightning"
@@ -411,8 +414,8 @@ namespace Runeveil
             if (duel.Phase == DuelPhase.Battle)
                 return !canAim && usingXr ? "Spells hit the body. Draw Ward when the Muse raises her paw"
                     : duel.WeakPoint == ArenaTarget.Miss
-                    ? "The weak point shattered. Watch for the next glow"
-                    : $"Aim for the glowing {duel.WeakPoint.DisplayName().ToLowerInvariant()}";
+                    ? "The weak point shattered. Watch for the next marker"
+                    : $"Aim for the marked {duel.WeakPoint.DisplayName().ToLowerInvariant()}";
             return "";
         }
 
@@ -447,7 +450,7 @@ namespace Runeveil
             Notify("Duel started");
         }
 
-        /// <summary>エディター専用のデバッグ用。視線が取れなくても、頭の位置から光っている弱点を見ている扱いにする。</summary>
+        /// <summary>エディター専用のデバッグ用。視線が取れなくても、頭の位置から目印の付いた弱点を見ている扱いにする。</summary>
         Ray? AssumedGaze()
         {
             gazeHint = null;
@@ -1008,7 +1011,7 @@ namespace Runeveil
                     CastResult.Miss => "The spell missed",
                     _ => power + (part.IsWeakPoint()
                         ? $"{part.DisplayName()} hit!"
-                        : "Glancing hit. Aim for the glow or focus on a weak point")
+                        : "Glancing hit. Aim at the marker or focus on a weak point")
                 });
             }
         }

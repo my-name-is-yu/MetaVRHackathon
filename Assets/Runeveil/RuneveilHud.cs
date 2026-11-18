@@ -42,6 +42,7 @@ namespace Runeveil
         private Text guideControls;
         private Text wardText;
         private readonly Text[] hearts = new Text[RuneveilDuel.MaxHearts];
+        private Text weakPointText;
         private Text focusText;
         private Text spellText;
         private Text noticeText;
@@ -130,7 +131,7 @@ namespace Runeveil
             SetLayout(false);
         }
 
-        public void Render(int bossHp, int playerHearts, bool wardActive, string focusLabel,
+        public void Render(int bossHp, int playerHearts, bool wardActive, string weakPointLabel, string focusLabel,
             string spellLabel, string status, bool showGuide, string actionLabel, bool xrInput)
         {
             if (xrInput != spatial)
@@ -150,6 +151,9 @@ namespace Runeveil
 
             wardText.text = wardActive ? "WARD READY" : "WARD EMPTY";
             wardText.color = wardActive ? Mint : Muted;
+            bool hasWeakPoint = !string.IsNullOrEmpty(weakPointLabel);
+            weakPointText.text = hasWeakPoint ? weakPointLabel : "—";
+            weakPointText.color = hasWeakPoint ? Gold : Muted;
             focusText.text = string.IsNullOrEmpty(focusLabel) ? "—" : focusLabel;
             spellText.text = string.IsNullOrEmpty(spellLabel) ? "—" : spellLabel;
             guide.gameObject.SetActive(showGuide);
@@ -420,7 +424,7 @@ namespace Runeveil
         {
             guideControls.text = string.IsNullOrEmpty(controlHint)
                 ? (spatial
-                    ? "Pinch to draw. Look at the glow. Release.\n" +
+                    ? "Pinch to draw. Aim at the marker. Release.\n" +
                       "Pinch to select. Head aim is for menus only."
                     : "Drag to draw and release to cast.\nRight-click to lock or release your aim.")
                 : controlHint;
@@ -451,7 +455,7 @@ namespace Runeveil
             CreateGlyph(Spell.Rock, "Stone shot", new Color32(228, 185, 154, 255), -132, -78);
             CreateGlyph(Spell.Wind, "Wind blade", new Color32(207, 182, 255, 255), 0, -78);
             CreateGlyph(Spell.Barrier, "Ward", Mint, 132, -78);
-            Label("Combat tip", guide, "Hold aim on the glow for extra damage.\n" +
+            Label("Combat tip", guide, "Hold aim on a weak point for extra damage.\n" +
                 "Fist raised? Lightning at a weak point stops it.\n" +
                 "Raise Ward just before the strike lands.",
                 18, Muted, 392, 65, 0, -153, TextAnchor.MiddleLeft);
@@ -509,11 +513,13 @@ namespace Runeveil
 
         private void CreateTargetingPanel()
         {
-            targeting = Panel("Focus and spell", canvasRect, 358, 101);
-            Label("Focus caption", targeting, "FOCUS", 17, Muted, 104, 35, -105, 18, TextAnchor.MiddleLeft, true);
-            Label("Last cast caption", targeting, "LAST CAST", 17, Muted, 110, 35, -102, -20, TextAnchor.MiddleLeft, true);
-            focusText = Label("Focus name", targeting, "", 22, Mint, 212, 35, 55, 18, TextAnchor.MiddleLeft);
-            spellText = Label("Last cast", targeting, "", 22, Paper, 212, 35, 55, -20, TextAnchor.MiddleLeft);
+            targeting = Panel("Targeting and spell", canvasRect, 358, 130);
+            Label("Weak point caption", targeting, "WEAK POINT", 17, Gold, 114, 35, -110, 38, TextAnchor.MiddleLeft, true);
+            weakPointText = Label("Weak point name", targeting, "", 24, Gold, 210, 35, 63, 38, TextAnchor.MiddleLeft, true);
+            Label("Focus caption", targeting, "FOCUS", 17, Muted, 104, 35, -105, 1, TextAnchor.MiddleLeft, true);
+            Label("Last cast caption", targeting, "LAST CAST", 17, Muted, 110, 35, -102, -36, TextAnchor.MiddleLeft, true);
+            focusText = Label("Focus name", targeting, "", 22, Mint, 212, 35, 55, 1, TextAnchor.MiddleLeft);
+            spellText = Label("Last cast", targeting, "", 22, Paper, 212, 35, 55, -36, TextAnchor.MiddleLeft);
         }
 
         private void CreateAction()

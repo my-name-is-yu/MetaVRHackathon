@@ -294,14 +294,14 @@ def build_form(restored, mat):
     return join((body, *sleeves), "MuseWhite" if restored else "MuseDark")
 
 
-def crystal(name, center, radii, mat, sort):
+def crystal(name, center, radii, mat, bone):
     bpy.ops.mesh.primitive_ico_sphere_add(subdivisions=1)
     obj = bpy.context.object
     obj.name = name
     rx, ry, rz = radii
     obj.data.transform(Matrix.Translation(xyz(center)) @ Matrix.Diagonal((rx, rz, ry, 1)))
     obj.data.materials.append(mat)
-    return rigid(obj, sort)
+    return rigid(obj, bone)
 
 
 def horn(sign, material_, marker):
@@ -346,18 +346,17 @@ def horn(sign, material_, marker):
 def build_corruption(horn_mat):
     gem = material("MuseCrystal", (0.95, 0.095, 0.38), 0.28)
     rim = material("MuseCrystalRim", (0.25, 0.052, 0.13), 0.58)
-    sides = ((1, ".L"), (-1, ".R"))
-    horns = [horn(side, horn_mat, "Horn" + suffix) for side, suffix in sides]
-    parts = [
-        rigid(oval("Crystal seat", (0, 1.61, -0.599), (0.221, 0.262, 0.078), rim), "Core"),
-        crystal("Chest crystal", (0, 1.61, -0.68), (0.146, 0.206, 0.095), gem, "Core"),
-    ]
-    for side, suffix in sides:
-        parts.extend([
-            crystal("Horn shard", (side * 0.60, 3.45, -0.31), (0.09, 0.114, 0.078), gem, "Horn" + suffix),
-            crystal("Paw crystal", (side * 1.40, 1.19, -0.49), (0.106, 0.127, 0.088), gem, "PawGem" + suffix),
-        ])
-    for part in parts:
+    horns = (horn(1, horn_mat, "Horn.L"), horn(-1, horn_mat, "Horn.R"))
+    seat = rigid(oval("Crystal seat", (0, 1.61, -0.599), (0.221, 0.262, 0.078), rim), "Core")
+    # Keep the gems separate so the arena can show only the current weak point.
+    gems = (
+        crystal("MuseWeakCore", (0, 1.61, -0.68), (0.146, 0.206, 0.095), gem, "Core"),
+        crystal("MuseWeakRightHand", (-1.40, 1.19, -0.49), (0.106, 0.127, 0.088), gem, "PawGem.R"),
+        crystal("MuseWeakLeftHorn", (0.60, 3.45, -0.31), (0.09, 0.114, 0.078), gem, "Horn.L"),
+        crystal("MuseWeakRightHorn", (-0.60, 3.45, -0.31), (0.09, 0.114, 0.078), gem, "Horn.R"),
+        crystal("MuseWeakRaisedFist", (1.40, 1.19, -0.49), (0.106, 0.127, 0.088), gem, "PawGem.L"),
+    )
+    for part in (seat, *gems):
         while part.data.uv_layers:
             part.data.uv_layers.remove(part.data.uv_layers[0])
         # ArenaSurface multiplies the imported vertex color by its material.
@@ -365,7 +364,7 @@ def build_corruption(horn_mat):
         colors = part.data.color_attributes.new(name="Facing", type="FLOAT_COLOR", domain="CORNER")
         for color in colors.data:
             color.color = (1.0, 1.0, 1.0, 1.0)
-    return join(horns + parts, "MuseCorruption")
+    return (join((*horns, seat), "MuseCorruption"), *gems)
 
 
 def validate(objects):
@@ -393,8 +392,7 @@ def main():
     ivory = material("MuseWhiteArtwork", (0.81, 0.78, 0.71))
     dark = build_form(False, plush)
     white = build_form(True, ivory)
-    attachments = build_corruption(plush)
-    objects = (dark, white, attachments)
+    objects = (dark, white, *build_corruption(plush))
     for obj in objects:
         skin(obj, rig)
     validate(objects)
