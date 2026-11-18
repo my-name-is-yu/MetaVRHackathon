@@ -1,6 +1,6 @@
 # Save Muse! — Competition Submission Packet
 
-**Private working packet.** The Devpost entry has not been submitted. Representative `my-name-is-yu` owns the video publication and Devpost submission. Google Drive is the representative's video delivery destination; the public YouTube or Vimeo URL for judging remains to be set by the representative.
+**Private working packet.** Representative `my-name-is-yu` owns video publication and Devpost submission. The representative should confirm the submission receipt and public judging URL; this packet does not assert current Devpost account status. Google Drive is the representative's video delivery destination.
 
 ## Public Devpost copy
 
@@ -27,7 +27,7 @@ Pinch thumb and index finger to trace a spell from the on-screen guide; release 
 ## Public entry fields for the representative to confirm
 
 - **Track:** Gaming.
-- **Division:** New is provisional. Confirm it against the event's New Experience rule, including the Meta-template exception, and the team's dated project provenance before selection; use the Adapted criteria if New is not eligible.
+- **Division (provisional): New Experience.** Repository history places the Unity starter and its template notes on November 2, 2026 ([`cbf0175`](https://github.com/my-name-is-yu/MetaVRHackathon/commit/cbf0175ee9d018facced589022a2e7a25285d9e2), [`60cba74`](https://github.com/my-name-is-yu/MetaVRHackathon/commit/60cba740959a13684ec3053bf50ac036fc0ef244)). The first game-specific Runeveil WebXR prototype is dated November 18 at 13:00 JST ([`d48d15d`](https://github.com/my-name-is-yu/MetaVRHackathon/commit/d48d15da79ccf95256ef834c3b6f2e0dfe70d15d)); the Unity port followed at 13:52 ([`7ddf5aa`](https://github.com/my-name-is-yu/MetaVRHackathon/commit/7ddf5aa6f9c17b91756ae8f40172aebfc2a5cfdc)) and the Muse boss at 14:52 ([`db59d9c`](https://github.com/my-name-is-yu/MetaVRHackathon/commit/db59d9c900eb2a645c74135aa0175e8ae7842bb3)). These commits support New as a candidate but cannot rule out off-repository work before September 24; the representative should confirm that no earlier project design, code, build, or prototype existed. Official [§4 of the rules](https://start-developer-competition-26.devpost.com/rules) says New must be created during the competition window and excludes prior codebases, shipped titles, and repurposed early-access builds. Adapted applies when a build, prototype, or published app existed before September 24 and a meaningful feature, mode, or platform integration shipped during the window; the sponsor decides significance and may reassign entries. The published rules state no blanket template exception. If the starter's status affects this classification, obtain the organizer's decision. The November 18 WebXR-to-Unity port alone does not make the project Adapted because both versions are within the competition window.
 - **Target launch date, if unpublished:** Representative to confirm.
 - **Demo video URL:** Pending. The representative will set up a publicly playable YouTube or Vimeo URL for judging and add it after verifying playback.
 
@@ -42,14 +42,14 @@ Pinch thumb and index finger to trace a spell from the on-screen guide; release 
 
 **Do not paste this section into public Devpost fields.**
 
-- **Owner/status:** `my-name-is-yu` is the designated representative and will handle the Competition channel/invite, public video publication, and Devpost submission. These actions are pending.
+- **Owner/status:** `my-name-is-yu` is the designated representative for the Competition channel/invite, public video publication, and Devpost submission. Submission receipt and public judging URL are pending confirmation from the representative.
 - **Verified candidate APK:** [Private prerelease page](https://github.com/my-name-is-yu/MetaVRHackathon/releases/tag/save-muse-competition-candidate-0.2.3-2026-11-18) · [APK asset](https://github.com/my-name-is-yu/MetaVRHackathon/releases/download/save-muse-competition-candidate-0.2.3-2026-11-18/Save-Muse-0.2.3-release.apk). Asset: `Save-Muse-0.2.3-release.apk`; verified SHA-256: `397b1244bcde2ea4b5741b406c9d1fde0c46beba30722186f62cb4dd47da9073`. This GitHub prerelease is the APK handoff, not the competition judge invite.
 - **Competition judge access:** Create or select Save Muse!'s dedicated Competition channel, enable its invite, and verify judge access. Share the invite only through the official private submission field.
 - **Video delivery:** `Save Muse! - Competition Demo.mp4` is delivered to Google Drive for the representative. Verified export: 32.000 s, 36,479,770 bytes, SHA-256 `b0378f14364e6d3fd597017851a2175c80f11091c54ac85249db6e8e7303f95d` (H.264, 1920×1080, 30 fps; AAC stereo, 48 kHz). The public judging URL is pending: the representative will publish through the team's authorized YouTube or Vimeo channel, verify playback without sign-in, and add that public URL to Devpost. Do not use the Drive delivery URL or source-recording links in public Devpost fields.
 - **Submission art:** [Devpost cover](SubmissionArt/Save-Muse-Devpost-Cover.jpg) and [video thumbnail](SubmissionArt/Save-Muse-Video-Thumbnail.jpg). Use each image in its corresponding representative-controlled entry field.
 - Confirm the roster and public display names. Supply emails only in the official form.
 - Confirm the New vs Adapted division and target launch date if the experience is unpublished.
-- Submit through the representative's authenticated Devpost account, save the submission receipt, and verify judge access through the winner-announcement period.
+- Confirm the Devpost entry through the representative's authenticated account, retain its receipt, and verify judge access through the winner-announcement period.
 
 ## Private video and music record
 
