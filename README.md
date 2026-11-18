@@ -1,7 +1,7 @@
-# 🕶 Meta VR Glasses Unity Template
-This template provides a VR-ready project with the Meta XR SDKs needed to develop for **Meta VR Glasses**.
+# Save Muse!
+This Unity game is based on Meta's VR Glasses template and uses Meta XR SDKs for **Meta VR Glasses**.
 
-## Runeveil — 星暮れの遺跡
+## Unity instructions
 
 ### Unity 版
 

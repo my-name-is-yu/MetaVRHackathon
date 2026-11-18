@@ -438,7 +438,8 @@ namespace Runeveil
         {
             guideControls.text = string.IsNullOrEmpty(controlHint)
                 ? (spatial
-                    ? "Pinch to draw. Look at the target\nand release. To start, look and pinch."
+                    ? "Pinch to draw. Look at the glow. Release.\n" +
+                      "Pinch to select. Head aim is for menus only."
                     : "Drag to draw and release to cast.\nRight-click to lock or release your aim.")
                 : controlHint;
         }
@@ -458,7 +459,7 @@ namespace Runeveil
         private void CreateGuide()
         {
             guide = Panel("Practice and spellbook", canvasRect, 440, 396);
-            Label("Runeveil", guide, "Runeveil", 40, Paper, 274, 52, -60, 154, TextAnchor.MiddleLeft, true);
+            Label("Title", guide, "Save Muse!", 40, Paper, 274, 52, -60, 154, TextAnchor.MiddleLeft, true);
             Label("Practice", guide, "PRACTICE", 17, Gold, 144, 35, 126, 155, TextAnchor.MiddleRight, true);
             ImageBox("Title divider", guide, 392, 1, 0, 121, Edge);
             guideControls = Label("How to cast", guide, "", 20, Paper, 392, 67, 0, 81, TextAnchor.MiddleLeft);
@@ -468,7 +469,9 @@ namespace Runeveil
             CreateGlyph(Spell.Rock, "Stone shot", new Color32(228, 185, 154, 255), -132, -78);
             CreateGlyph(Spell.Wind, "Wind blade", new Color32(207, 182, 255, 255), 0, -78);
             CreateGlyph(Spell.Barrier, "Ward", Mint, 132, -78);
-            Label("Combat tip", guide, "Fist raised? Hold gaze on the glowing crystal.\nA closed ring means extra damage. Lightning\ninterrupts. Ward just before the strike lands.",
+            Label("Combat tip", guide, "Hold aim on the glow for extra damage.\n" +
+                "Fist raised? Lightning at a weak point stops it.\n" +
+                "Raise Ward just before the strike lands.",
                 18, Muted, 392, 65, 0, -153, TextAnchor.MiddleLeft);
         }
 
