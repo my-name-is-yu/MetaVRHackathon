@@ -67,6 +67,10 @@ namespace Runeveil
         private readonly MeshRenderer[] chargeFlames = new MeshRenderer[FlameCount];
         private readonly MeshRenderer[] chargeEmbers = new MeshRenderer[EmberCount];
         private Spell? chargeSpell;
+        private const int ArcPoints = 7;
+        private readonly LineRenderer[] chargeArcs = new LineRenderer[3];
+        private readonly Vector3[,] arcShapes = new Vector3[3, ArcPoints];
+        private float nextArcShape;
 
         // Sparks that trail the drawing fingertip.
         private const int SparkCount = 72;
@@ -76,7 +80,7 @@ namespace Runeveil
         private readonly float[] sparkAge = new float[SparkCount];
         private readonly float[] sparkLife = new float[SparkCount];
         private readonly float[] sparkSize = new float[SparkCount];
-        private readonly bool[] sparkHot = new bool[SparkCount];
+        private readonly int[] sparkStyle = new int[SparkCount];
         private int nextSpark;
         private float sparkBudget;
         private Vector3 lastSparkTip;
@@ -579,7 +583,7 @@ namespace Runeveil
         /// Call every frame. While emitting, sparks fly off the fingertip; faster strokes throw more.
         /// Hot sparks (fire charged) burn orange-red.
         /// </summary>
-        public void TickSparks(bool emit, Vector3 tip, float speed, bool hot, float amount, Vector3 head, float dt)
+        public void TickSparks(bool emit, Vector3 tip, float speed, Spell? style, float amount, Vector3 head, float dt)
         {
             if (sparkRoot == null) return;
             dt = Mathf.Clamp(dt, 0f, 0.05f);
@@ -592,7 +596,7 @@ namespace Runeveil
                 while (sparkBudget >= 1f)
                 {
                     sparkBudget -= 1f;
-                    SpawnSpark(tip - motion * UnityEngine.Random.value, inherit, hot);
+                    SpawnSpark(tip - motion * UnityEngine.Random.value, inherit, style);
                 }
                 lastSparkTip = tip;
                 hadSparkTip = true;
@@ -615,7 +619,7 @@ namespace Runeveil
                     continue;
                 }
                 Transform spark = sparks[i].transform;
-                sparkVelocity[i] += Vector3.down * (1.4f * dt);
+                sparkVelocity[i] += Vector3.down * ((sparkStyle[i] == (int)Spell.Wind ? 0.25f : 1.4f) * dt);
                 sparkVelocity[i] *= 1f - Mathf.Min(1f, 2.2f * dt);
                 spark.position += sparkVelocity[i] * dt;
                 Vector3 facing = spark.position - head;
@@ -624,21 +628,33 @@ namespace Runeveil
                 float size = sparkSize[i] * (1f - life * 0.55f);
                 float stretch = 1f + Mathf.Min(3.5f, sparkVelocity[i].magnitude * 9f);
                 spark.localScale = new Vector3(size, size * stretch, 1f);
-                Color color = sparkHot[i]
-                    ? Color.Lerp(Rgb(0xffe0a0), Rgb(0xff4a1c), life)
-                    : Color.Lerp(Rgb(0xfff6d8), Rgb(0xffa83d), life);
+                SparkPalette(sparkStyle[i], out Color hotColor, out Color coolColor);
+                Color color = Color.Lerp(hotColor, coolColor, life);
                 Tint(sparks[i], color, Mathf.Pow(1f - life, 1.4f) * 0.95f);
             }
         }
 
-        private void SpawnSpark(Vector3 at, Vector3 inherit, bool hot)
+        private static void SparkPalette(int style, out Color start, out Color end)
+        {
+            switch (style)
+            {
+                case (int)Spell.Fire: start = Rgb(0xffe0a0); end = Rgb(0xff4a1c); break;
+                case (int)Spell.Lightning: start = Rgb(0xfffbe0); end = Rgb(0xffd04a); break;
+                case (int)Spell.Ice: start = Rgb(0xffffff); end = Rgb(0x7fd0ff); break;
+                case (int)Spell.Wind: start = Rgb(0xf6f0ff); end = Rgb(0xb69cff); break;
+                case (int)Spell.Barrier: start = Rgb(0xf0fff8); end = Rgb(0x6fe8bd); break;
+                default: start = Rgb(0xfff6d8); end = Rgb(0xffa83d); break;
+            }
+        }
+
+        private void SpawnSpark(Vector3 at, Vector3 inherit, Spell? style)
         {
             int i = nextSpark;
             nextSpark = (nextSpark + 1) % SparkCount;
             sparkAge[i] = 0f;
             sparkLife[i] = UnityEngine.Random.Range(0.2f, 0.48f);
-            sparkSize[i] = UnityEngine.Random.Range(0.004f, 0.009f) * (hot ? 1.25f : 1f);
-            sparkHot[i] = hot;
+            sparkSize[i] = UnityEngine.Random.Range(0.004f, 0.009f) * (style.HasValue ? 1.25f : 1f);
+            sparkStyle[i] = style.HasValue ? (int)style.Value : -1;
             sparkVelocity[i] = UnityEngine.Random.onUnitSphere * UnityEngine.Random.Range(0.12f, 0.5f) +
                 Vector3.up * 0.08f + inherit;
             sparks[i].transform.position = at;
@@ -655,12 +671,17 @@ namespace Runeveil
             for (int i = 0; i < EmberCount; i++)
                 chargeEmbers[i] = Render(chargeRoot, "Ember", softDisc, softGlow);
             chargeBurst = Render(chargeRoot, "Charge burst", softDisc, softGlow);
+            for (int i = 0; i < chargeArcs.Length; i++)
+            {
+                chargeArcs[i] = Line(chargeRoot, "Charge arc", ArcPoints, 0.0045f);
+                chargeArcs[i].gameObject.SetActive(false);
+            }
             chargeRoot.gameObject.SetActive(false);
         }
 
         /// <summary>
-        /// Shows the charged-spell effect at the fingertip. Pass null to let it fade out.
-        /// Call every frame; a change from null to a spell plays the charge-complete burst.
+        /// Shows the charged-spell effect at the fingertip, styled per element. Pass null to let it fade.
+        /// Call every frame; a change of spell plays the charge-complete burst.
         /// </summary>
         public void SetCharge(Spell? spell, Vector3 position, Vector3 head, float dt)
         {
@@ -682,45 +703,33 @@ namespace Runeveil
             Vector3 facing = chargeRoot.position - head;
             if (facing.sqrMagnitude > 0.0001f) chargeRoot.rotation = Quaternion.LookRotation(facing, Vector3.up);
 
+            Spell style = chargeSpell ?? Spell.Fire;
             float a = chargeOpacity;
             float t = chargeAge;
-            // Ignition pop: everything swells briefly when the charge completes.
+            // Pop: everything swells briefly when the charge completes.
             float pop = 1f + 0.55f * Mathf.Exp(-t * 9f);
             float breathe = 1f + 0.08f * Mathf.Sin(t * 7.3f) + 0.05f * Mathf.Sin(t * 13.1f);
+            ChargePalette(style, out Color halo, out Color core, out Color burstColor);
 
-            chargeHalo.transform.localPosition = new Vector3(0f, 0.008f, 0.004f);
+            float haloAlpha = style == Spell.Lightning ? 0.3f + 0.25f * Hash(Mathf.Floor(t * 24f)) : 0.42f;
+            chargeHalo.transform.localPosition = new Vector3(0f, style == Spell.Fire ? 0.008f : 0f, 0.004f);
             chargeHalo.transform.localScale = Vector3.one * 0.15f * pop * breathe;
-            Tint(chargeHalo, Rgb(0xff5a2a), 0.42f * a);
+            Tint(chargeHalo, halo, haloAlpha * a);
 
-            for (int i = 0; i < FlameCount; i++)
-            {
-                float phase = i * 1.37f;
-                float flicker = 0.75f + 0.25f * Mathf.Sin(t * (11f + i * 2.3f) + phase) +
-                    0.12f * Mathf.Sin(t * (23f + i * 3.1f) + phase * 2f);
-                float x = (i - (FlameCount - 1) * 0.5f) * 0.0105f + 0.003f * Mathf.Sin(t * 6f + phase);
-                float height = (i == FlameCount / 2 ? 0.085f : 0.06f - Mathf.Abs(i - FlameCount / 2) * 0.008f) * flicker * pop;
-                Transform flame = chargeFlames[i].transform;
-                flame.localPosition = new Vector3(x, height * 0.42f, 0.001f * i);
-                flame.localRotation = Quaternion.Euler(0f, 0f, -x * 380f + 6f * Mathf.Sin(t * 9f + phase));
-                flame.localScale = new Vector3(0.032f * (0.9f + 0.1f * flicker), height, 1f);
-                Tint(chargeFlames[i], Color.Lerp(Rgb(0xff7a2e), Rgb(0xffc04d), 0.5f + 0.5f * Mathf.Sin(phase)),
-                    0.85f * a);
-            }
-
-            chargeCore.transform.localPosition = new Vector3(0f, 0.004f, -0.002f);
+            chargeCore.transform.localPosition = new Vector3(0f, style == Spell.Fire ? 0.004f : 0f, -0.002f);
             chargeCore.transform.localScale = Vector3.one * 0.042f * pop * breathe;
-            Tint(chargeCore, Rgb(0xfff1b8), 0.95f * a);
+            Tint(chargeCore, core, 0.95f * a);
 
-            for (int i = 0; i < EmberCount; i++)
+            switch (style)
             {
-                float speed = 0.55f + 0.17f * (i % 3);
-                float rise = Mathf.Repeat(t * speed + i / (float)EmberCount, 1f);
-                float sway = Mathf.Sin(t * 3.1f + i * 2.2f) * 0.012f + (i - EmberCount * 0.5f) * 0.004f;
-                Transform ember = chargeEmbers[i].transform;
-                ember.localPosition = new Vector3(sway, 0.012f + rise * 0.11f, -0.003f);
-                ember.localScale = Vector3.one * Mathf.Lerp(0.014f, 0.005f, rise);
-                Tint(chargeEmbers[i], Color.Lerp(Rgb(0xffd27a), Rgb(0xff4d1f), rise), (1f - rise) * 0.9f * a);
+                case Spell.Fire: FireCharge(t, a, pop); break;
+                case Spell.Lightning: LightningCharge(t, a, pop); break;
+                case Spell.Ice: IceCharge(t, a, pop); break;
+                case Spell.Wind: WindCharge(t, a, pop); break;
+                default: WardCharge(t, a, pop); break;
             }
+            foreach (LineRenderer arc in chargeArcs)
+                if (arc.gameObject.activeSelf != (style == Spell.Lightning)) arc.gameObject.SetActive(style == Spell.Lightning);
 
             float burst = Mathf.Clamp01(t / ChargeBurstTime);
             bool bursting = burst < 1f;
@@ -729,7 +738,163 @@ namespace Runeveil
             {
                 chargeBurst.transform.localPosition = new Vector3(0f, 0f, -0.004f);
                 chargeBurst.transform.localScale = Vector3.one * Mathf.Lerp(0.05f, 0.36f, 1f - (1f - burst) * (1f - burst));
-                Tint(chargeBurst, Rgb(0xffb347), (1f - burst) * 0.9f);
+                Tint(chargeBurst, burstColor, (1f - burst) * 0.9f);
+            }
+        }
+
+        private static void ChargePalette(Spell spell, out Color halo, out Color core, out Color burst)
+        {
+            switch (spell)
+            {
+                case Spell.Lightning: halo = Rgb(0xffc23a); core = Rgb(0xfffbe0); burst = Rgb(0xffe27a); break;
+                case Spell.Ice: halo = Rgb(0x4fb8ff); core = Rgb(0xf0fbff); burst = Rgb(0xa3e4ff); break;
+                case Spell.Wind: halo = Rgb(0x9b7cff); core = Rgb(0xf4efff); burst = Rgb(0xcfb6ff); break;
+                case Spell.Barrier: halo = Rgb(0x5ee8b5); core = Rgb(0xeafff6); burst = Rgb(0x9ff2ce); break;
+                default: halo = Rgb(0xff5a2a); core = Rgb(0xfff1b8); burst = Rgb(0xffb347); break;
+            }
+        }
+
+        private static float Hash(float x) => Mathf.Repeat(Mathf.Sin(x * 12.9898f) * 43758.5453f, 1f);
+
+        private void Part(MeshRenderer part, Vector3 position, float angle, Vector2 size, Color color, float alpha)
+        {
+            Transform item = part.transform;
+            item.localPosition = position;
+            item.localRotation = Quaternion.Euler(0f, 0f, angle);
+            item.localScale = new Vector3(size.x, size.y, 1f);
+            Tint(part, color, alpha);
+        }
+
+        // Fire: flickering tongues with rising embers.
+        private void FireCharge(float t, float a, float pop)
+        {
+            for (int i = 0; i < FlameCount; i++)
+            {
+                float phase = i * 1.37f;
+                float flicker = 0.75f + 0.25f * Mathf.Sin(t * (11f + i * 2.3f) + phase) +
+                    0.12f * Mathf.Sin(t * (23f + i * 3.1f) + phase * 2f);
+                float x = (i - (FlameCount - 1) * 0.5f) * 0.0105f + 0.003f * Mathf.Sin(t * 6f + phase);
+                float height = (i == FlameCount / 2 ? 0.085f : 0.06f - Mathf.Abs(i - FlameCount / 2) * 0.008f) * flicker * pop;
+                Part(chargeFlames[i], new Vector3(x, height * 0.42f, 0.001f * i), -x * 380f + 6f * Mathf.Sin(t * 9f + phase),
+                    new Vector2(0.032f * (0.9f + 0.1f * flicker), height),
+                    Color.Lerp(Rgb(0xff7a2e), Rgb(0xffc04d), 0.5f + 0.5f * Mathf.Sin(phase)), 0.85f * a);
+            }
+            for (int i = 0; i < EmberCount; i++)
+            {
+                float speed = 0.55f + 0.17f * (i % 3);
+                float rise = Mathf.Repeat(t * speed + i / (float)EmberCount, 1f);
+                float sway = Mathf.Sin(t * 3.1f + i * 2.2f) * 0.012f + (i - EmberCount * 0.5f) * 0.004f;
+                float size = Mathf.Lerp(0.014f, 0.005f, rise);
+                Part(chargeEmbers[i], new Vector3(sway, 0.012f + rise * 0.11f, -0.003f), 0f, new Vector2(size, size),
+                    Color.Lerp(Rgb(0xffd27a), Rgb(0xff4d1f), rise), (1f - rise) * 0.9f * a);
+            }
+        }
+
+        // Lightning: jagged arcs that re-strike constantly, with crackling sparks.
+        private void LightningCharge(float t, float a, float pop)
+        {
+            if (t >= nextArcShape || t < 0.02f)
+            {
+                nextArcShape = t + 0.055f;
+                for (int j = 0; j < chargeArcs.Length; j++)
+                {
+                    float angle = UnityEngine.Random.Range(0f, Mathf.PI * 2f);
+                    float length = UnityEngine.Random.Range(0.045f, 0.08f) * pop;
+                    Vector3 end = new Vector3(Mathf.Cos(angle), Mathf.Sin(angle), 0f) * length;
+                    Vector3 side = new Vector3(-end.y, end.x, 0f).normalized;
+                    for (int k = 0; k < ArcPoints; k++)
+                    {
+                        float p = k / (ArcPoints - 1f);
+                        float jitter = k == 0 || k == ArcPoints - 1 ? 0f : UnityEngine.Random.Range(-0.011f, 0.011f);
+                        arcShapes[j, k] = end * p + side * jitter;
+                    }
+                }
+            }
+            for (int j = 0; j < chargeArcs.Length; j++)
+            {
+                LineRenderer arc = chargeArcs[j];
+                for (int k = 0; k < ArcPoints; k++)
+                    arc.SetPosition(k, chargeRoot.TransformPoint(arcShapes[j, k]));
+                Tint(arc, Color.Lerp(Rgb(0xfff3a8), Color.white, Hash(j + Mathf.Floor(t * 30f))),
+                    (0.55f + 0.45f * Hash(j * 7f + Mathf.Floor(t * 40f))) * a);
+            }
+            for (int i = 0; i < FlameCount; i++)
+            {
+                float seed = Mathf.Floor(t * 20f) * 3.1f + i * 17.3f;
+                float angle = Hash(seed) * Mathf.PI * 2f;
+                float r = 0.025f + Hash(seed + 1f) * 0.03f;
+                float size = 0.006f + Hash(seed + 2f) * 0.008f;
+                Part(chargeFlames[i], new Vector3(Mathf.Cos(angle) * r, Mathf.Sin(angle) * r, -0.002f), 0f,
+                    new Vector2(size, size), Rgb(0xfffbe0), Hash(seed + 3f) * 0.95f * a);
+            }
+            for (int i = 0; i < EmberCount; i++)
+            {
+                float seed = Mathf.Floor(t * 32f) * 5.7f + i * 9.1f;
+                float angle = Hash(seed) * Mathf.PI * 2f;
+                float r = 0.01f + Hash(seed + 4f) * 0.05f;
+                Part(chargeEmbers[i], new Vector3(Mathf.Cos(angle) * r, Mathf.Sin(angle) * r, -0.003f), angle * Mathf.Rad2Deg,
+                    new Vector2(0.003f, 0.012f), Rgb(0xffe27a), (Hash(seed + 5f) > 0.4f ? 0.9f : 0f) * a);
+            }
+        }
+
+        // Ice: crystal shards slowly orbiting the core, with drifting snow.
+        private void IceCharge(float t, float a, float pop)
+        {
+            for (int i = 0; i < FlameCount; i++)
+            {
+                float angle = t * 1.1f + i * Mathf.PI * 2f / FlameCount;
+                float r = (0.045f + 0.004f * Mathf.Sin(t * 2f + i)) * pop;
+                Part(chargeFlames[i], new Vector3(Mathf.Cos(angle) * r, Mathf.Sin(angle) * r, 0.001f * i),
+                    angle * Mathf.Rad2Deg - 90f, new Vector2(0.012f, 0.05f * pop),
+                    Color.Lerp(Rgb(0xc9f1ff), Color.white, 0.5f + 0.5f * Mathf.Sin(t * 3f + i)), 0.9f * a);
+            }
+            for (int i = 0; i < EmberCount; i++)
+            {
+                float fall = Mathf.Repeat(t * 0.35f + i / (float)EmberCount, 1f);
+                float x = Mathf.Sin(i * 2.3f + t * 1.3f) * 0.045f;
+                Part(chargeEmbers[i], new Vector3(x, 0.06f - fall * 0.13f, -0.003f), 0f, new Vector2(0.008f, 0.008f),
+                    Rgb(0xf0fbff), Mathf.Sin(Mathf.PI * fall) * 0.9f * a);
+            }
+        }
+
+        // Wind: fast swirling wisps and motes spiraling outward.
+        private void WindCharge(float t, float a, float pop)
+        {
+            for (int i = 0; i < FlameCount; i++)
+            {
+                float angle = t * 6.5f + i * Mathf.PI * 2f / FlameCount;
+                float r = (0.04f + 0.008f * Mathf.Sin(t * 3f + i)) * pop;
+                Part(chargeFlames[i], new Vector3(Mathf.Cos(angle) * r, Mathf.Sin(angle) * r, 0.001f * i),
+                    angle * Mathf.Rad2Deg, new Vector2(0.01f, 0.05f), Rgb(0xe2d6ff), 0.75f * a);
+            }
+            for (int i = 0; i < EmberCount; i++)
+            {
+                float phase = Mathf.Repeat(t * 0.8f + i / (float)EmberCount, 1f);
+                float angle = t * 5f + i * 0.9f + phase * 4f;
+                float r = 0.015f + phase * 0.07f;
+                float size = Mathf.Lerp(0.009f, 0.004f, phase);
+                Part(chargeEmbers[i], new Vector3(Mathf.Cos(angle) * r, Mathf.Sin(angle) * r, -0.003f), 0f,
+                    new Vector2(size, size), Rgb(0xf6f0ff), (1f - phase) * 0.8f * a);
+            }
+        }
+
+        // Ward: a slowly turning ring of pulsing nodes with rising motes.
+        private void WardCharge(float t, float a, float pop)
+        {
+            for (int i = 0; i < FlameCount; i++)
+            {
+                float angle = t * 0.9f + i * Mathf.PI * 2f / FlameCount;
+                float r = 0.05f * pop;
+                float size = 0.017f * (1f + 0.25f * Mathf.Sin(t * 4f + i * 1.3f));
+                Part(chargeFlames[i], new Vector3(Mathf.Cos(angle) * r, Mathf.Sin(angle) * r, 0.001f * i), 0f,
+                    new Vector2(size, size), Rgb(0xb5ffe8), 0.85f * a);
+            }
+            for (int i = 0; i < EmberCount; i++)
+            {
+                float rise = Mathf.Repeat(t * 0.4f + i / (float)EmberCount, 1f);
+                float x = Mathf.Sin(i * 2.7f) * 0.04f + Mathf.Sin(t * 1.7f + i) * 0.006f;
+                Part(chargeEmbers[i], new Vector3(x, -0.03f + rise * 0.1f, -0.003f), 0f, new Vector2(0.007f, 0.007f),
+                    Rgb(0x9ff2ce), Mathf.Sin(Mathf.PI * rise) * 0.8f * a);
             }
         }
 

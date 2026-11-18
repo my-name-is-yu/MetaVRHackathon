@@ -290,6 +290,7 @@ namespace Runeveil
         {
             if (handLabel == null) return;
             if (handLabel.text != text) handLabel.text = text;
+            handLabel.fontSize = text.Length > 12 ? 18 : 23;
             handLabel.color = color;
         }
 

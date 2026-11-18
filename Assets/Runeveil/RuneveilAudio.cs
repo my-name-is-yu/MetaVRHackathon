@@ -12,9 +12,13 @@ namespace Runeveil
 
         AudioSource oneShot;
         AudioSource drawLoop;
+        // Indexed by (int)Spell. Rock has no charge, so its slots stay null.
+        readonly AudioSource[] chargedLoops = new AudioSource[6];
+        readonly AudioClip[] chargedLoopClips = new AudioClip[6];
+        readonly AudioClip[] chargeClips = new AudioClip[6];
+        readonly float[] chargedLevels = new float[6];
         AudioClip touchClip;
         AudioClip drawClip;
-        AudioClip chargeClip;
         AudioClip castClip;
         AudioClip wardClip;
         float drawLevel;
@@ -30,10 +34,29 @@ namespace Runeveil
 
             touchClip = Clip("Touch", 0.18f, Touch);
             drawClip = LoopClip("Drawing crackle", 1.6f, 0.12f, Crackle);
-            chargeClip = Clip("Charge complete", 1.25f, Charge);
+            chargeClips[(int)Spell.Fire] = Clip("Fire charge", 1.25f, Charge);
+            chargeClips[(int)Spell.Lightning] = Clip("Lightning charge", 1.1f, LightningCharge);
+            chargeClips[(int)Spell.Ice] = Clip("Ice charge", 1.4f, IceCharge);
+            chargeClips[(int)Spell.Wind] = Clip("Wind charge", 1.1f, WindCharge);
+            chargeClips[(int)Spell.Barrier] = Clip("Ward charge", 1.4f, WardCharge);
             castClip = Clip("Flame release", 0.8f, Cast);
             wardClip = Clip("Ward release", 0.7f, Ward);
             drawLoop.clip = drawClip;
+            AddChargedLoop(Spell.Fire, LoopClip("Charged flame roar", 2.4f, 0.2f, FlameRoar));
+            AddChargedLoop(Spell.Lightning, LoopClip("Charged electric buzz", 2f, 0.15f, ElectricBuzz));
+            AddChargedLoop(Spell.Ice, LoopClip("Charged frost shimmer", 2.4f, 0.2f, FrostShimmer));
+            AddChargedLoop(Spell.Wind, LoopClip("Charged gust", 2.4f, 0.3f, Gust));
+            AddChargedLoop(Spell.Barrier, LoopClip("Charged ward hum", 2f, 0.2f, WardHum));
+        }
+
+        void AddChargedLoop(Spell spell, AudioClip clip)
+        {
+            var source = CreateSource("SFX charged loop " + spell);
+            source.loop = true;
+            source.volume = 0f;
+            source.clip = clip;
+            chargedLoops[(int)spell] = source;
+            chargedLoopClips[(int)spell] = clip;
         }
 
         AudioSource CreateSource(string label)
@@ -53,8 +76,8 @@ namespace Runeveil
         public void PlayTouch(Vector3 at, RuneveilPinchSettings s) =>
             Play(touchClip, at, s.sfxVolume * s.touchVolume, Random.Range(0.95f, 1.06f));
 
-        public void PlayCharge(Vector3 at, RuneveilPinchSettings s) =>
-            Play(chargeClip, at, s.sfxVolume * s.chargeVolume, 1f);
+        public void PlayCharge(Spell spell, Vector3 at, RuneveilPinchSettings s) =>
+            Play(chargeClips[(int)spell], at, s.sfxVolume * s.chargeVolume, 1f);
 
         public void PlayCast(Spell spell, Vector3 at, RuneveilPinchSettings s)
         {
@@ -74,25 +97,44 @@ namespace Runeveil
             Play(castClip, at, s.sfxVolume * s.castVolume, pitch * Random.Range(0.97f, 1.03f));
         }
 
-        /// <summary>Call every frame. Speed is the fingertip speed in meters per second.</summary>
-        public void SetDrawing(bool active, Vector3 at, float speed, RuneveilPinchSettings s, float dt)
+        /// <summary>
+        /// Call every frame. Speed is the fingertip speed in meters per second.
+        /// While charged, the sparkler crackle crossfades into a roaring flame.
+        /// </summary>
+        public void SetDrawing(bool active, Spell? charged, Vector3 at, float speed, RuneveilPinchSettings s, float dt)
         {
             if (drawLoop == null) return;
             drawSpeed = Mathf.Lerp(drawSpeed, active ? speed : 0f, 1f - Mathf.Exp(-dt * 14f));
             float motion = Mathf.Clamp01(drawSpeed / 0.6f);
-            float target = active ? s.sfxVolume * s.drawVolume * (0.22f + 0.78f * motion) : 0f;
-            drawLevel = Mathf.MoveTowards(drawLevel, target, dt * (active ? 6f : 9f));
-            drawLoop.transform.position = at;
-            drawLoop.volume = drawLevel;
-            drawLoop.pitch = 0.85f + 0.45f * motion;
-            if (drawLevel > 0.001f && !drawLoop.isPlaying)
+            float level = s.sfxVolume * s.drawVolume * (0.22f + 0.78f * motion);
+
+            drawLevel = Mathf.MoveTowards(drawLevel, active && !charged.HasValue ? level : 0f, dt * (active ? 6f : 9f));
+            UpdateLoop(drawLoop, drawClip, drawLevel, 0.85f + 0.45f * motion, at);
+
+            // Each charged element has its own moving sound; it swells with speed, like swinging a torch.
+            for (int i = 0; i < chargedLoops.Length; i++)
             {
-                drawLoop.timeSamples = Random.Range(0, drawClip.samples);
-                drawLoop.Play();
+                if (chargedLoops[i] == null) continue;
+                bool on = active && charged.HasValue && (int)charged.Value == i;
+                float target = on ? s.sfxVolume * s.chargedDrawVolume * (0.35f + 0.65f * motion) : 0f;
+                chargedLevels[i] = Mathf.MoveTowards(chargedLevels[i], target, dt * (active ? 5f : 8f));
+                UpdateLoop(chargedLoops[i], chargedLoopClips[i], chargedLevels[i], 0.8f + 0.35f * motion, at);
             }
-            else if (drawLevel <= 0.001f && drawLoop.isPlaying)
+        }
+
+        static void UpdateLoop(AudioSource source, AudioClip clip, float volume, float pitch, Vector3 at)
+        {
+            source.transform.position = at;
+            source.volume = volume;
+            source.pitch = pitch;
+            if (volume > 0.001f && !source.isPlaying)
             {
-                drawLoop.Stop();
+                source.timeSamples = Random.Range(0, clip.samples);
+                source.Play();
+            }
+            else if (volume <= 0.001f && source.isPlaying)
+            {
+                source.Stop();
             }
         }
 
@@ -199,6 +241,198 @@ namespace Runeveil
                     hp += Coefficient(3500f) * (n - hp);
                     d[start + k] += (n - hp) * amplitude * Mathf.Exp(-k / (length * 0.25f));
                 }
+            }
+        }
+
+        // Charged flame: low rumbling roar with a flickering mid-band whoosh and soft pops.
+        static void FlameRoar(float[] d, System.Random r)
+        {
+            float rumble = 0f, rumble2 = 0f, midA = 0f, midB = 0f;
+            float flickerPhase = 0f, swirlPhase = 0f;
+            for (int i = 0; i < d.Length; i++)
+            {
+                float t = i / (float)Rate;
+                float n = Noise(r);
+                rumble += Coefficient(220f) * (n - rumble);
+                rumble2 += Coefficient(220f) * (rumble - rumble2);
+                midA += Coefficient(2600f) * (n - midA);
+                midB += Coefficient(700f) * (n - midB);
+                // Irregular flicker: two slow sines at unrelated rates.
+                flickerPhase += Tau * (3.1f + 1.3f * Mathf.Sin(Tau * 0.41f * t)) / Rate;
+                swirlPhase += Tau * 1.7f / Rate;
+                float flicker = 0.65f + 0.35f * Mathf.Sin(flickerPhase) * Mathf.Sin(swirlPhase + 0.8f);
+                d[i] = rumble2 * 5.5f + (midA - midB) * 0.5f * flicker;
+            }
+            int pops = Mathf.RoundToInt(d.Length / (float)Rate * 9f);
+            for (int p = 0; p < pops; p++)
+            {
+                int start = r.Next(d.Length);
+                int length = r.Next(Rate / 120, Rate / 50);
+                float amplitude = 0.2f + (float)r.NextDouble() * 0.35f;
+                float low = 0f;
+                for (int k = 0; k < length && start + k < d.Length; k++)
+                {
+                    low += Coefficient(900f) * (Noise(r) - low);
+                    d[start + k] += low * amplitude * 3f * Mathf.Exp(-k / (length * 0.3f));
+                }
+            }
+        }
+
+        static void Ping(float[] d, int start, float freq, float decay, float amplitude)
+        {
+            for (int k = 0; start + k < d.Length; k++)
+            {
+                float t = k / (float)Rate;
+                float env = Mathf.Exp(-t * decay);
+                if (env < 0.001f) break;
+                d[start + k] += Mathf.Sin(Tau * freq * t) * env * amplitude * Mathf.Clamp01(t * 2000f);
+            }
+        }
+
+        static void Zap(float[] d, System.Random r, int start, int length, float amplitude)
+        {
+            float low = 0f;
+            for (int k = 0; k < length && start + k < d.Length; k++)
+            {
+                float n = Noise(r);
+                low += Coefficient(2500f) * (n - low);
+                d[start + k] += (n - low) * amplitude * Mathf.Exp(-k / (length * 0.35f));
+            }
+        }
+
+        // Lightning charge: sharp crack, electric buzz, scattered snaps.
+        static void LightningCharge(float[] d, System.Random r)
+        {
+            for (int i = 0; i < d.Length; i++)
+            {
+                float t = i / (float)Rate;
+                float freq = 98f * (1f + 0.15f * Mathf.Exp(-t * 10f));
+                float buzz = 0f;
+                for (int k = 1; k <= 9; k++) buzz += Mathf.Sin(Tau * freq * k * t) / k;
+                d[i] = buzz * Mathf.Exp(-t * 3.5f) * 0.28f * (0.7f + 0.3f * Mathf.Sin(Tau * 23f * t));
+            }
+            Zap(d, r, 0, Rate / 25, 1.1f);
+            for (int p = 0; p < 26; p++)
+            {
+                int start = r.Next(Rate / 30, d.Length * 3 / 4);
+                Zap(d, r, start, r.Next(Rate / 600, Rate / 200), (0.3f + (float)r.NextDouble() * 0.5f) * (1f - start / (float)d.Length));
+            }
+        }
+
+        // Lightning moving loop: humming buzz with random snaps.
+        static void ElectricBuzz(float[] d, System.Random r)
+        {
+            for (int i = 0; i < d.Length; i++)
+            {
+                float t = i / (float)Rate;
+                float buzz = 0f;
+                for (int k = 1; k <= 10; k++) buzz += Mathf.Sin(Tau * 110f * k * t) / k;
+                d[i] = buzz * 0.22f * (0.65f + 0.35f * Mathf.Sin(Tau * 7f * t) * Mathf.Sin(Tau * 2.5f * t));
+            }
+            int zaps = Mathf.RoundToInt(d.Length / (float)Rate * 38f);
+            for (int p = 0; p < zaps; p++)
+                Zap(d, r, r.Next(d.Length), r.Next(Rate / 500, Rate / 160), 0.3f + (float)r.NextDouble() * 0.6f);
+        }
+
+        // Ice charge: frosty hiss and a cascade of crystal chimes.
+        static void IceCharge(float[] d, System.Random r)
+        {
+            float low = 0f;
+            for (int i = 0; i < d.Length; i++)
+            {
+                float t = i / (float)Rate;
+                float n = Noise(r);
+                low += Coefficient(4500f) * (n - low);
+                float hiss = (n - low) * Mathf.Exp(-t * 6f) * Mathf.Clamp01(t * 100f) * 0.35f;
+                float whump = Mathf.Sin(Tau * 180f * t) * Mathf.Exp(-t * 12f) * 0.3f;
+                d[i] = hiss + whump;
+            }
+            float[] notes = { 2093f, 2637f, 3136f, 4186f, 3520f };
+            for (int k = 0; k < notes.Length; k++)
+                Ping(d, Mathf.RoundToInt((0.01f + k * 0.045f) * Rate), notes[k], 4.5f, 0.24f);
+            for (int p = 0; p < 10; p++)
+                Ping(d, r.Next(Rate / 10, d.Length / 2), 3000f + (float)r.NextDouble() * 2500f, 30f, 0.08f);
+        }
+
+        // Ice moving loop: airy high shimmer with random tinkles.
+        static void FrostShimmer(float[] d, System.Random r)
+        {
+            float low = 0f;
+            for (int i = 0; i < d.Length; i++)
+            {
+                float t = i / (float)Rate;
+                float n = Noise(r);
+                low += Coefficient(5000f) * (n - low);
+                d[i] = (n - low) * 0.14f * (0.75f + 0.25f * Mathf.Sin(Tau * 0.8f * t));
+            }
+            int tinkles = Mathf.RoundToInt(d.Length / (float)Rate * 14f);
+            for (int p = 0; p < tinkles; p++)
+                Ping(d, r.Next(d.Length), 2500f + (float)r.NextDouble() * 2800f, 35f, 0.12f + (float)r.NextDouble() * 0.2f);
+        }
+
+        static float Bandpass(ref float a, ref float b, float n, float center)
+        {
+            a += Coefficient(center * 1.6f) * (n - a);
+            b += Coefficient(center * 0.6f) * (a - b);
+            return a - b;
+        }
+
+        // Wind charge: swelling whoosh with a rising whistle.
+        static void WindCharge(float[] d, System.Random r)
+        {
+            float a = 0f, b = 0f, phase = 0f;
+            for (int i = 0; i < d.Length; i++)
+            {
+                float t = i / (float)Rate;
+                float center = Mathf.Lerp(400f, 2400f, Mathf.Sin(Mathf.PI * Mathf.Clamp01(t / 0.9f)));
+                float swell = Mathf.Sin(Mathf.PI * Mathf.Clamp01(t / 1.05f));
+                float whoosh = Bandpass(ref a, ref b, Noise(r), center) * swell * 1.2f;
+                phase += Tau * Mathf.Lerp(700f, 1400f, Mathf.Clamp01(t / 0.5f)) / Rate;
+                float whistle = Mathf.Sin(phase) * Mathf.Exp(-t * 3f) * Mathf.Clamp01(t * 20f) * 0.12f;
+                d[i] = whoosh + whistle;
+            }
+        }
+
+        // Wind moving loop: gusting band-passed air.
+        static void Gust(float[] d, System.Random r)
+        {
+            float a = 0f, b = 0f;
+            for (int i = 0; i < d.Length; i++)
+            {
+                float t = i / (float)Rate;
+                float center = 650f + 380f * Mathf.Sin(Tau * 0.7f * t) + 200f * Mathf.Sin(Tau * 1.9f * t + 1f);
+                float gust = 0.6f + 0.4f * Mathf.Sin(Tau * 0.55f * t + 0.4f);
+                d[i] = Bandpass(ref a, ref b, Noise(r), center) * gust;
+            }
+        }
+
+        // Ward charge: warm bell chord with a soft shimmer.
+        static void WardCharge(float[] d, System.Random r)
+        {
+            float low = 0f;
+            for (int i = 0; i < d.Length; i++)
+            {
+                float t = i / (float)Rate;
+                low += Coefficient(3000f) * (Noise(r) - low);
+                float shimmer = low * Mathf.Exp(-t * 5f) * 0.25f;
+                float hum = Mathf.Sin(Tau * 130.8f * t) * Mathf.Exp(-t * 3f) * 0.2f;
+                d[i] = shimmer + hum;
+            }
+            float[] chord = { 523.25f, 659.25f, 783.99f, 1046.5f };
+            for (int k = 0; k < chord.Length; k++)
+                Ping(d, Mathf.RoundToInt(k * 0.03f * Rate), chord[k], 2.4f, 0.2f);
+        }
+
+        // Ward moving loop: steady, gently pulsing hum.
+        static void WardHum(float[] d, System.Random r)
+        {
+            float low = 0f;
+            for (int i = 0; i < d.Length; i++)
+            {
+                float t = i / (float)Rate;
+                low += Coefficient(2000f) * (Noise(r) - low);
+                float tone = Mathf.Sin(Tau * 220f * t) + 0.6f * Mathf.Sin(Tau * 330f * t) + 0.3f * Mathf.Sin(Tau * 440f * t);
+                d[i] = tone * 0.25f * (0.7f + 0.3f * Mathf.Sin(Tau * 3f * t)) + low * 0.15f;
             }
         }
 
