@@ -25,6 +25,14 @@ namespace Runeveil
         private ReleasedArmPose cleansingAttackArm;
         private ReleasedArmPose cleansingAnchorArm;
 
+        internal bool MuseCleansingComplete => museRig != null
+            ? museRig.CleansingComplete
+            : cleansingMuse && museCleansingAge >= MuseLookUpSeconds + (hasRestoredPortrait ? MusePortraitFadeSeconds : 0f);
+
+        internal bool MuseRestoredFormVisible => museRig != null
+            ? museRig.RestoredFormVisible
+            : (hasRestoredPortrait && MuseVictoryPortraitBlend > 0f) || MuseCleansingComplete;
+
         // The rig's restored form stays on stage behind the result UI.
         internal float MuseVictoryPortraitBlend => museRig == null
             ? CleansingProgress(museCleansingAge, MuseLookUpSeconds, MuseLookUpSeconds + MusePortraitFadeSeconds)

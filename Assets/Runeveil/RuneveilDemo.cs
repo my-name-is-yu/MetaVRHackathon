@@ -83,6 +83,7 @@ namespace Runeveil
         bool usingXr;
         bool locked;
         bool pendingDesktopAction;
+        bool menuAvailableAtStrokeStart;
         Vector2 lockedViewportPoint;
         Vector3 origin;
         Vector3 strokeRight;
@@ -183,7 +184,8 @@ namespace Runeveil
         string MenuAction => duel.Phase switch
         {
             DuelPhase.Practice => "Start duel",
-            DuelPhase.Won or DuelPhase.Lost => "Fight again",
+            DuelPhase.Won when arena.MuseCleansingComplete => "Fight again",
+            DuelPhase.Lost => "Fight again",
             _ => ""
         };
 
@@ -274,6 +276,8 @@ namespace Runeveil
             if (contact != AttackResult.None)
                 sfx.PlayMuseStrike(contact == AttackResult.Blocked, heavyContact,
                     arena.WeakPointPosition(ArenaTarget.RaisedFist), Pinch);
+            if (duel.Phase == DuelPhase.Won && arena.MuseCleansingComplete && resultSummary.Length == 0)
+                ShowResult("Victory");
             arena.SetCharge(chargedSpell, chargeLevel, chargeAnchor, view.transform.position, deltaTime);
             UpdateDrawingFeedback(deltaTime);
             music.Tick(duel.Phase == DuelPhase.Battle, duel.Phase == DuelPhase.Won, duel.Phase == DuelPhase.Lost,
@@ -297,7 +301,8 @@ namespace Runeveil
             }
             ArenaTarget markedWeakPoint = duel.ExposedTarget.IsWeakPoint() ? duel.ExposedTarget : activeWeakPoint;
             hud.Render(duel.BossHealth, duel.Hearts, duel.WardVisible, markedWeakPoint.DisplayName(), focus, spellLabel, status,
-                duel.Phase == DuelPhase.Practice, action, usingXr);
+                duel.Phase == DuelPhase.Practice, action, usingXr,
+                duel.Phase != DuelPhase.Won || !arena.MuseRestoredFormVisible);
             hud.SetVictoryIllustration(arena.MuseVictoryPortraitBlend);
             hud.SetControlHint(!usingXr && !preview ? "Connect a headset to draw and aim" : null);
             hud.SetActionFocus(usingXr ? menuActionRay : mousePointer);
@@ -450,6 +455,8 @@ namespace Runeveil
 
         void StartBattle()
         {
+            if (MenuAction.Length == 0) return;
+
             ClearStroke();
             pendingHits.Clear();
             pendingReleaseAim = default;
@@ -712,7 +719,7 @@ namespace Runeveil
                 return;
             }
 
-            if (duel.Phase != DuelPhase.Battle && Keyboard.current?.enterKey.wasPressedThisFrame == true)
+            if (MenuAction.Length != 0 && Keyboard.current?.enterKey.wasPressedThisFrame == true)
             {
                 StartBattle();
                 return;
@@ -729,7 +736,7 @@ namespace Runeveil
 
             if (mouse.leftButton.wasPressedThisFrame && inside)
             {
-                pendingDesktopAction = duel.Phase != DuelPhase.Battle && hud.ActionHit(cursorRay);
+                pendingDesktopAction = MenuAction.Length != 0 && hud.ActionHit(cursorRay);
                 if (!pendingDesktopAction) BeginStroke(point, null);
             }
             if (mouse.leftButton.wasReleasedThisFrame)
@@ -746,6 +753,7 @@ namespace Runeveil
         {
             ClearStroke();
             drawing = true;
+            menuAvailableAtStrokeStart = hand != null && MenuAction.Length != 0;
             strokeHand = hand;
             strokeStarted = Time.unscaledTime;
             origin = point;
@@ -929,7 +937,7 @@ namespace Runeveil
             bool shortPinch = usingXr && Time.unscaledTime - strokeStarted <= settings.tapMaxDuration &&
                 maxDisplacementSquared <= settings.tapMaxMovement * settings.tapMaxMovement;
             // デバッグ時はボタンが出ていれば、見ていなくても押したことにする
-            bool onAction = MenuAction.Length != 0 &&
+            bool onAction = menuAvailableAtStrokeStart && MenuAction.Length != 0 &&
                 (aim.AssumedGaze || (aim.MenuActionRay.HasValue && hud.ActionHit(aim.MenuActionRay.Value)));
             if (!recognized.HasValue && shortPinch && onAction)
             {
@@ -1015,7 +1023,7 @@ namespace Runeveil
                     result == CastResult.Interrupt || result == CastResult.Exposed || result == CastResult.FocusHit, won,
                     pending.Level);
                 string power = pending.Level > 1 ? $"Lv{pending.Level} {pending.Spell}! " : "";
-                if (won) ShowResult("Victory");
+                if (won) noticeUntil = 0;
                 else Notify(result switch
                 {
                     CastResult.Interrupt => power + "Lightning stopped her strike. The Muse is down",

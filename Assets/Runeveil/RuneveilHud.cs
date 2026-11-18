@@ -132,11 +132,13 @@ namespace Runeveil
         }
 
         public void Render(int bossHp, int playerHearts, bool wardActive, string weakPointLabel, string focusLabel,
-            string spellLabel, string status, bool showGuide, string actionLabel, bool xrInput)
+            string spellLabel, string status, bool showGuide, string actionLabel, bool xrInput, bool showBossHealth)
         {
             if (xrInput != spatial)
                 SetLayout(xrInput);
 
+            if (boss.gameObject.activeSelf != showBossHealth)
+                boss.gameObject.SetActive(showBossHealth);
             bossHp = Mathf.Clamp(bossHp, 0, RuneveilDuel.MaxBossHealth);
             if (currentBossHp != bossHp)
             {

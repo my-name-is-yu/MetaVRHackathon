@@ -354,6 +354,8 @@ namespace Runeveil
             public Transform Head => head;
             public Vector3 BodyCenter => Vector3.Lerp(pelvis.position, chest.position, 0.5f);
             public Vector3 RevealCenter => markers[ArenaTarget.Core.WeakPointIndex()].position;
+            public bool CleansingComplete => phase == Phase.Restored;
+            public bool RestoredFormVisible => white.enabled;
 
             public Transform WeakPoint(int index) => markers[index];
 
