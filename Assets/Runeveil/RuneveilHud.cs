@@ -55,6 +55,21 @@ namespace Runeveil
         private LineRenderer stroke;
         private Material strokeMaterial;
 
+        private const float PinchBarWidth = 180f;
+        private const float PinchBarLeft = -125f;
+        private RectTransform pinchMeter;
+        private readonly PinchRow[] pinchRows = new PinchRow[2];
+
+        private struct PinchRow
+        {
+            public Text Name;
+            public RectTransform Fill;
+            public Image FillImage;
+            public RectTransform StartMark;
+            public RectTransform ReleaseMark;
+            public Text Detail;
+        }
+
         public void Initialize(Camera camera, Transform spatialReference)
         {
             view = camera;
@@ -198,6 +213,75 @@ namespace Runeveil
             stroke.positionCount = count;
             for (int i = 0; i < count; i++)
                 stroke.SetPosition(i, points[i]);
+        }
+
+        /// <summary>Live pinch meter for tuning on the headset. Shown only in the spatial layout.</summary>
+        public void SetPinchMeter(bool visible, RuneveilPinchDetector left, RuneveilPinchDetector right,
+            RuneveilPinchSettings settings)
+        {
+            if (canvasRect == null)
+                return;
+
+            if (!visible || !spatial)
+            {
+                if (pinchMeter != null && pinchMeter.gameObject.activeSelf)
+                    pinchMeter.gameObject.SetActive(false);
+                return;
+            }
+
+            if (pinchMeter == null)
+                CreatePinchMeter();
+            if (!pinchMeter.gameObject.activeSelf)
+                pinchMeter.gameObject.SetActive(true);
+            UpdatePinchRow(pinchRows[0], "L", left, settings);
+            UpdatePinchRow(pinchRows[1], "R", right, settings);
+        }
+
+        private void CreatePinchMeter()
+        {
+            pinchMeter = Panel("Pinch meter", canvasRect, 358, 101);
+            pinchMeter.anchoredPosition = new Vector2(422, -405);
+            pinchMeter.localScale = Vector3.one * 0.9f;
+            for (int i = 0; i < pinchRows.Length; i++)
+            {
+                float y = i == 0 ? 21 : -21;
+                var row = new PinchRow();
+                row.Name = Label("Hand", pinchMeter, "", 19, Muted, 40, 34, -155, y, TextAnchor.MiddleCenter, true);
+                ImageBox("Track", pinchMeter, PinchBarWidth, 14, PinchBarLeft + PinchBarWidth * 0.5f, y, Tile);
+                row.FillImage = ImageBox("Strength", pinchMeter, PinchBarWidth, 14, PinchBarLeft, y, Muted);
+                row.Fill = row.FillImage.rectTransform;
+                row.Fill.pivot = new Vector2(0, 0.5f);
+                row.Fill.anchoredPosition = new Vector2(PinchBarLeft, y);
+                row.ReleaseMark = ImageBox("Release threshold", pinchMeter, 3, 24, 0, y, Edge).rectTransform;
+                row.StartMark = ImageBox("Start threshold", pinchMeter, 3, 24, 0, y, Gold).rectTransform;
+                row.Detail = Label("Distance", pinchMeter, "", 18, Paper, 110, 34, 118, y, TextAnchor.MiddleRight);
+                pinchRows[i] = row;
+            }
+        }
+
+        private static void UpdatePinchRow(PinchRow row, string hand, RuneveilPinchDetector pinch,
+            RuneveilPinchSettings settings)
+        {
+            float strength = pinch != null ? Mathf.Clamp01(pinch.Strength) : 0f;
+            row.Fill.SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal, PinchBarWidth * strength);
+            float y = row.Fill.anchoredPosition.y;
+            row.StartMark.anchoredPosition = new Vector2(PinchBarLeft + PinchBarWidth * settings.startStrength, y);
+            row.ReleaseMark.anchoredPosition = new Vector2(PinchBarLeft + PinchBarWidth * settings.releaseStrength, y);
+            row.StartMark.gameObject.SetActive(settings.useStrength);
+            row.ReleaseMark.gameObject.SetActive(settings.useStrength);
+
+            bool tracked = pinch != null && pinch.Tracked;
+            Color state = !tracked ? Edge : pinch.InGrace ? Gold : pinch.Pinching ? Mint : Muted;
+            row.Name.text = hand;
+            row.Name.color = state;
+            row.FillImage.color = state;
+            if (!tracked)
+            {
+                row.Detail.text = "no hand";
+                return;
+            }
+            string distance = float.IsInfinity(pinch.Distance) ? "--" : $"{pinch.Distance * 100f:0.0}cm";
+            row.Detail.text = pinch.SystemPinch ? distance + " •" : distance;
         }
 
         public void SetHand(Vector3? worldPosition)

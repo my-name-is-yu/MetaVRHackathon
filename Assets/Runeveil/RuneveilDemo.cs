@@ -20,11 +20,15 @@ namespace Runeveil
         [SerializeField] OVRHand rightHand;
         [SerializeField] RuneveilArena arena;
         [SerializeField] RuneveilHud hud;
+        [Tooltip("Optional. Defaults to Resources/Runeveil/PinchSettings.")]
+        [SerializeField] RuneveilPinchSettings pinchSettings;
 #if UNITY_EDITOR
         [SerializeField] bool desktopPreviewInEditor;
 #endif
 
         readonly RuneveilDuel duel = new();
+        readonly RuneveilPinchDetector leftPinch = new();
+        readonly RuneveilPinchDetector rightPinch = new();
         readonly List<Vector2> samples = new(MaxSamples);
         readonly List<Vector3> points = new(MaxSamples);
         readonly List<XRDisplaySubsystem> displays = new();
@@ -46,6 +50,8 @@ namespace Runeveil
         Vector3 strokeRight;
         Vector3 strokeUp;
         Vector3? handPosition;
+        Vector3 pendingReleasePoint;
+        Ray? pendingReleaseAim;
         float strokeStarted;
         float maxDisplacementSquared;
         float strokeFadeUntil;
@@ -59,9 +65,13 @@ namespace Runeveil
             xrView = xrRig.centerEyeAnchor.GetComponent<Camera>();
             leftSkeleton = leftHand.GetComponent<OVRSkeleton>();
             rightSkeleton = rightHand.GetComponent<OVRSkeleton>();
+            RuneveilPinchDetector.DebugLeft = leftPinch;
+            RuneveilPinchDetector.DebugRight = rightPinch;
             arena.Build();
             SelectCamera(HasXrDisplay());
         }
+
+        RuneveilPinchSettings Pinch => pinchSettings != null ? pinchSettings : RuneveilPinchSettings.Current;
 
         void LateUpdate()
         {
@@ -98,6 +108,7 @@ namespace Runeveil
                 duel.Phase == DuelPhase.Practice, action, usingXr);
             hud.SetActionFocus(usingXr ? aim : mousePointer);
             hud.SetHand(handPosition);
+            hud.SetPinchMeter(usingXr && Pinch.showDebugMeter, leftPinch, rightPinch, Pinch);
             if (drawing) hud.ShowStroke(points, DrawingColor);
             else if (strokeFadeUntil > 0)
             {
@@ -206,30 +217,51 @@ namespace Runeveil
             {
                 if (drawing) ClearStroke();
                 leftReady = rightReady = false;
+                leftPinch.Reset();
+                rightPinch.Reset();
                 return;
             }
 
-            ReadHand(leftHand, leftSkeleton, ref leftReady, aim);
-            ReadHand(rightHand, rightSkeleton, ref rightReady, aim);
+            float deltaTime = Time.unscaledDeltaTime;
+            ReadHand(leftHand, leftSkeleton, leftPinch, ref leftReady, aim, deltaTime);
+            ReadHand(rightHand, rightSkeleton, rightPinch, ref rightReady, aim, deltaTime);
         }
 
-        void ReadHand(OVRHand hand, OVRSkeleton skeleton, ref bool ready, Ray? aim)
+        void ReadHand(OVRHand hand, OVRSkeleton skeleton, RuneveilPinchDetector pinch, ref bool ready, Ray? aim,
+            float deltaTime)
         {
-            if (!TryGetFingertip(hand, skeleton, out var tip))
+            var settings = Pinch;
+            if (!TryGetFingertips(hand, skeleton, out var tip, out var thumb, out bool hasThumb))
             {
+                pinch.LostTime += deltaTime;
+                // Keep the stroke alive through a brief tracking dropout.
+                if (strokeHand == hand && pinch.LostTime <= settings.trackingLossGrace) return;
                 if (strokeHand == hand) ClearStroke();
+                pinch.Reset();
                 ready = false;
                 return;
             }
 
+            pinch.LostTime = 0f;
             if (!handPosition.HasValue || strokeHand == hand) handPosition = tip;
-            bool pinching = hand.GetFingerIsPinching(OVRHand.HandFinger.Index);
+            float distance = hasThumb ? Vector3.Distance(tip, thumb) : float.PositiveInfinity;
+            pinch.Update(hand.GetFingerPinchStrength(OVRHand.HandFinger.Index), distance,
+                hand.GetFingerIsPinching(OVRHand.HandFinger.Index), settings, deltaTime);
+
+            bool pinching = pinch.Pinching;
             bool began = pinching && ready;
             ready = !pinching;
             if (strokeHand == hand)
             {
+                // Remember where and what the player looked at the moment the fingers parted.
+                if (pinch.GraceStarted)
+                {
+                    pendingReleasePoint = tip;
+                    pendingReleaseAim = aim;
+                }
+                if (pinch.InGrace) return;
                 if (pinching) Sample(tip);
-                else Release(tip, aim);
+                else Release(pendingReleasePoint, pendingReleaseAim);
             }
             else if (began && !drawing)
             {
@@ -237,25 +269,36 @@ namespace Runeveil
             }
         }
 
-        static bool TryGetFingertip(OVRHand hand, OVRSkeleton skeleton, out Vector3 point)
+        static bool TryGetFingertips(OVRHand hand, OVRSkeleton skeleton, out Vector3 index, out Vector3 thumb,
+            out bool hasThumb)
         {
-            point = default;
-            if (!hand.IsDataValid || !hand.IsTracked || !hand.IsPointerPoseValid || hand.IsSystemGestureInProgress ||
+            index = default;
+            thumb = default;
+            hasThumb = false;
+            if (!hand.IsDataValid || !hand.IsTracked || hand.IsSystemGestureInProgress ||
                 !skeleton.IsInitialized || !skeleton.IsDataValid)
                 return false;
 
             var skeletonType = skeleton.GetSkeletonType();
-            var tip = skeletonType == OVRSkeleton.SkeletonType.XRHandLeft ||
-                skeletonType == OVRSkeleton.SkeletonType.XRHandRight
-                ? OVRSkeleton.BoneId.XRHand_IndexTip : OVRSkeleton.BoneId.Hand_IndexTip;
+            bool openXrHand = skeletonType == OVRSkeleton.SkeletonType.XRHandLeft ||
+                skeletonType == OVRSkeleton.SkeletonType.XRHandRight;
+            var indexId = openXrHand ? OVRSkeleton.BoneId.XRHand_IndexTip : OVRSkeleton.BoneId.Hand_IndexTip;
+            var thumbId = openXrHand ? OVRSkeleton.BoneId.XRHand_ThumbTip : OVRSkeleton.BoneId.Hand_ThumbTip;
+            bool hasIndex = false;
             foreach (var bone in skeleton.Bones)
             {
-                if (bone.Id != tip) continue;
-
-                point = bone.Transform.position;
-                return true;
+                if (bone.Id == indexId)
+                {
+                    index = bone.Transform.position;
+                    hasIndex = true;
+                }
+                else if (bone.Id == thumbId)
+                {
+                    thumb = bone.Transform.position;
+                    hasThumb = true;
+                }
             }
-            return false;
+            return hasIndex;
         }
 
         Ray? MouseAim(out Ray? pointer)
@@ -354,8 +397,9 @@ namespace Runeveil
             strokeHand = null;
             strokeFadeUntil = Time.unscaledTime + 0.28f;
             var spell = RuneRecognizer.MatchRune(samples);
-            bool shortPinch = usingXr && Time.unscaledTime - strokeStarted <= 0.45f &&
-                maxDisplacementSquared <= 0.0009f;
+            var settings = Pinch;
+            bool shortPinch = usingXr && Time.unscaledTime - strokeStarted <= settings.tapMaxDuration &&
+                maxDisplacementSquared <= settings.tapMaxMovement * settings.tapMaxMovement;
             if (!spell.HasValue && shortPinch && aim.HasValue && hud.ActionHit(aim.Value))
             {
                 StartBattle();
