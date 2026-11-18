@@ -68,6 +68,8 @@ namespace Runeveil
         [Range(0f, 0.5f)] public float chargeConfirmTime = 0.05f;
         [Tooltip("Ward (horizontal line) waits longer, because Z also starts with a horizontal line.")]
         [Range(0f, 0.8f)] public float wardConfirmTime = 0.3f;
+        [Tooltip("Highest power level from repeating the shape after charging.")]
+        [Range(1, 9)] public int maxChargeLevel = 5;
 
         [Header("Sound effects")]
         [Range(0f, 1f)] public float sfxVolume = 0.8f;
@@ -81,6 +83,8 @@ namespace Runeveil
         [Range(0f, 1f)] public float chargeVolume = 1f;
         [Tooltip("Spell release.")]
         [Range(0f, 1f)] public float castVolume = 1f;
+        [Tooltip("Explosion where the spell lands.")]
+        [Range(0f, 1f)] public float impactVolume = 1f;
 
         [Header("Drawing sparks")]
         public bool sparks = true;

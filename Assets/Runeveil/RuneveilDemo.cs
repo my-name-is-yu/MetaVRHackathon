@@ -52,6 +52,8 @@ namespace Runeveil
         EyeEvidence nativeEye;
         EyeEvidence openXrEye;
         string gazeHint;
+        // Latest eye ray even when it has not been verified as independent eye movement.
+        Ray? unverifiedGaze;
         bool freshEye;
         int frameCount, handFrames, freshEyeFrames, independentEyeFrames, cancelledStrokes;
         double reportAt;
@@ -94,8 +96,11 @@ namespace Runeveil
         }
 
         float chargeMatchedFor;
-        Spell? pendingCharge;
+        int pendingKey = -1;
         bool chargedThisStroke;
+        int chargeLevel;
+        int chargeSegmentStart;
+        readonly List<Vector2> segment = new(MaxSamples);
 
         static bool Chargeable(Spell spell) => spell != Spell.Rock;
 
@@ -167,7 +172,7 @@ namespace Runeveil
             if (Debug.isDebugBuild) ReportInputs(ray.HasValue);
             arena.Tick(deltaTime, duel.Windup, duel.Shield, duel.Phase == DuelPhase.Won,
                 onCore, duel.FocusProgress, duel.FocusReady);
-            arena.SetCharge(chargedSpell, chargeAnchor, view.transform.position, deltaTime);
+            arena.SetCharge(chargedSpell, chargeLevel, chargeAnchor, view.transform.position, deltaTime);
             UpdateDrawingFeedback(deltaTime);
 
             string focus = target switch
@@ -311,6 +316,7 @@ namespace Runeveil
         Ray? ReadGaze()
         {
             freshEye = false;
+            unverifiedGaze = null;
             if (!OVRManager.hasInputFocus)
             {
                 ResetEyeEvidence();
@@ -328,6 +334,7 @@ namespace Runeveil
             {
                 var ray = new Ray(space.TransformPoint(eyeState.Pose.Position.FromFlippedZVector3f()),
                     space.TransformDirection(eyeState.Pose.Orientation.FromFlippedZQuatf() * Vector3.forward));
+                unverifiedGaze = ray;
                 if (Verified(ray, ref nativeEye, eyeState.Time, now))
                 {
                     gazeHint = null;
@@ -346,6 +353,7 @@ namespace Runeveil
             if (openXrValid && age >= -MaxEyeSampleAge && age <= MaxEyeSampleAge)
             {
                 var ray = new Ray(space.TransformPoint(pose.position), space.TransformDirection(pose.rotation * Vector3.forward));
+                unverifiedGaze ??= ray;
                 if (Verified(ray, ref openXrEye, eyes.lastUpdateTime, now))
                 {
                     gazeHint = null;
@@ -594,17 +602,44 @@ namespace Runeveil
         void RefreshHandLabel()
         {
             if (chargedSpell.HasValue)
-                hud.SetHandLabel(ChargeName(chargedSpell.Value).ToUpperInvariant() + " READY", ChargeColor(chargedSpell.Value));
+                hud.SetHandLabel(ChargeName(chargedSpell.Value).ToUpperInvariant() +
+                    (chargeLevel > 1 ? $" Lv{chargeLevel}" : " READY"), ChargeColor(chargedSpell.Value));
             else hud.SetHandLabel("Drawing rune", HandLabelColor);
         }
 
-        bool LooksLikeFire(Spell? strictMatch)
+        bool LooksLikeFire(Spell? strictMatch) => LooksLikeFire(samples, strictMatch);
+
+        bool LooksLikeFire(IReadOnlyList<Vector2> stroke, Spell? strictMatch)
         {
             if (strictMatch == Spell.Fire) return true;
             if (strictMatch.HasValue) return false; // a confident other rune wins
             var s = Pinch;
-            return RuneRecognizer.IsRoughCircle(samples, s.circleMinSweep, s.circleMaxRadiusVariation,
+            return RuneRecognizer.IsRoughCircle(stroke, s.circleMinSweep, s.circleMaxRadiusVariation,
                 s.circleMaxCorner, s.circleMinSize);
+        }
+
+        Spell? ClassifyChargeable(IReadOnlyList<Vector2> stroke)
+        {
+            var strict = RuneRecognizer.MatchRune(stroke);
+            Spell? match = LooksLikeFire(stroke, strict) ? (Spell?)Spell.Fire : strict;
+            return match.HasValue && Chargeable(match.Value) ? match : null;
+        }
+
+        // True when some tail of the stroke drawn since the last charge is the given rune again.
+        // Searching tails lets the connecting move back to a shape's start be ignored.
+        bool RepeatsSince(int start, Spell spell)
+        {
+            int end = samples.Count;
+            if (end - start < 6) return false;
+            int step = Mathf.Max(1, (end - start) / 20);
+            for (int from = start; from <= end - 6; from += step)
+            {
+                segment.Clear();
+                Vector2 offset = samples[from];
+                for (int i = from; i < end; i++) segment.Add(samples[i] - offset);
+                if (ClassifyChargeable(segment) == spell) return true;
+            }
+            return false;
         }
 
         void Sample(Vector3 point)
@@ -625,41 +660,70 @@ namespace Runeveil
         }
 
         // Recognize the rune while the stroke is still being drawn. Once a shape has matched for a
-        // moment, that spell is charged; releasing then casts it. The charge can still change while
-        // the same stroke continues (a horizontal line charges Ward, then turns into Lightning as Z).
+        // moment, that spell is charged; releasing then casts it. Drawing the same shape again after
+        // charging raises its power level. A fresh Lv1 charge can still change while the stroke goes on
+        // (a horizontal line charges Ward, then turns into Lightning as the Z is finished).
         void CheckCharge()
         {
             if (!drawing || Time.unscaledTime < nextChargeCheck) return;
             float elapsed = nextChargeCheck <= 0f ? 0f : ChargeCheckInterval;
             nextChargeCheck = Time.unscaledTime + ChargeCheckInterval;
+            var settings = Pinch;
 
-            var strict = RuneRecognizer.MatchRune(samples);
-            Spell? match = LooksLikeFire(strict) ? (Spell?)Spell.Fire : strict;
-            if (match.HasValue && !Chargeable(match.Value)) match = null;
-            if (match != pendingCharge)
+            Spell? match = null;
+            bool levelUp = false;
+            if (!chargedSpell.HasValue)
             {
-                pendingCharge = match;
+                match = ClassifyChargeable(samples);
+            }
+            else
+            {
+                // As on the remote: a fresh charge can still turn into another rune while the stroke goes on
+                // (a horizontal line charges Ward, then becomes Lightning as the Z is finished).
+                // Once powered up past Lv1 it stays that rune.
+                if (chargedThisStroke && chargeLevel == 1)
+                {
+                    var whole = ClassifyChargeable(samples);
+                    if (whole.HasValue && whole != chargedSpell) match = whole;
+                }
+                if (!match.HasValue && chargeLevel < settings.maxChargeLevel &&
+                    RepeatsSince(chargeSegmentStart, chargedSpell.Value))
+                {
+                    match = chargedSpell;
+                    levelUp = true;
+                }
+            }
+
+            int key = match.HasValue ? (int)match.Value * 2 + (levelUp ? 1 : 0) : -1;
+            if (key != pendingKey)
+            {
+                pendingKey = key;
                 chargeMatchedFor = 0f;
                 return;
             }
             if (!match.HasValue) return;
 
             chargeMatchedFor += elapsed;
-            var settings = Pinch;
             float needed = match == Spell.Barrier ? settings.wardConfirmTime : settings.chargeConfirmTime;
             if (chargeMatchedFor < needed) return;
-            if (chargedThisStroke && chargedSpell == match) return;
 
+            chargeLevel = levelUp ? chargeLevel + 1 : 1;
             chargedSpell = match;
             chargedThisStroke = true;
+            chargeSegmentStart = samples.Count - 1;
+            pendingKey = -1;
+            chargeMatchedFor = 0f;
             chargeHand = strokeHand;
             chargeAnchor = points[points.Count - 1];
             RefreshHandLabel();
-            sfx.PlayCharge(match.Value, chargeAnchor, settings);
+            sfx.PlayCharge(match.Value, chargeLevel, chargeAnchor, settings);
             string name = ChargeName(match.Value);
-            Notify(match == Spell.Barrier
-                ? "Ward charged! Release to raise it"
-                : usingXr ? $"{name} charged! Look at a target and release" : $"{name} charged! Release to cast");
+            if (levelUp)
+                Notify(chargeLevel >= settings.maxChargeLevel ? $"{name} Lv{chargeLevel} — MAX POWER!" : $"{name} Lv{chargeLevel}!");
+            else
+                Notify(match == Spell.Barrier
+                    ? "Ward charged! Release to raise it"
+                    : usingXr ? $"{name} charged! Look at a target and release" : $"{name} charged! Release to cast");
         }
 
         void Release(Vector3 point, AimSample aim)
@@ -696,37 +760,48 @@ namespace Runeveil
             }
             if (spell != Spell.Barrier && !aim.Ray.HasValue)
             {
-                RecordCast(spell, ArenaTarget.Miss, "cancel");
-                Notify(usingXr ? gazeHint ?? "Eye gaze unavailable. Look at a target and try again" : "Release inside the Game view");
-                return;
+                // No verified eye gaze: still cast. Aim along the raw eye ray if there is one, otherwise
+                // where the head faces. Focus bonuses still need verified gaze, so none applies here.
+                Ray fallback = (usingXr ? unverifiedGaze : null) ?? new Ray(view.transform.position, view.transform.forward);
+                var fallbackTarget = arena.Aim(fallback, out Vector3 fallbackHit);
+                aim = new AimSample(fallback, fallbackTarget, fallbackHit, false);
+                RecordCast(spell, fallbackTarget, "fallback-aim");
             }
 
+            int level = releasingCharge ? Mathf.Max(1, chargeLevel) : 1;
             if (releasingCharge)
             {
                 chargedSpell = null;
                 chargeHand = null;
+                chargeLevel = 0;
             }
             var target = spell == Spell.Barrier ? ArenaTarget.Miss : aim.Target;
             Vector3 hit = spell == Spell.Barrier ? point : aim.Hit;
             if (duel.Finished)
             {
-                arena.Cast(spell.Value, point, hit, ArenaTarget.Miss, view.transform.position, view.transform.forward);
-                sfx.PlayCast(spell.Value, point, Pinch);
+                float flight = arena.Cast(spell.Value, point, hit, ArenaTarget.Miss, view.transform.position,
+                    view.transform.forward, level);
+                sfx.PlayCast(spell.Value, point, Pinch, level);
+                sfx.PlayImpact(spell.Value, level, hit, flight, Pinch);
                 return;
             }
-            var cast = duel.Cast(spell.Value, target, aim.Focused);
+            var cast = duel.Cast(spell.Value, target, aim.Focused, level);
             RecordCast(spell, target, cast.ToString());
-            arena.Cast(spell.Value, point, hit, target, view.transform.position, view.transform.forward);
-            sfx.PlayCast(spell.Value, point, Pinch);
-            spellLabel = spell == Spell.Barrier ? "Ward" : spell.Value.ToString();
+            float flightTime = arena.Cast(spell.Value, point, hit, target, view.transform.position,
+                view.transform.forward, level);
+            sfx.PlayCast(spell.Value, point, Pinch, level);
+            sfx.PlayImpact(spell.Value, level, hit, flightTime, Pinch);
+            string spellName = spell == Spell.Barrier ? "Ward" : spell.Value.ToString();
+            spellLabel = spellName + (level > 1 ? $" Lv{level}" : "");
+            string power = level > 1 ? $"Lv{level} {spellName}! " : "";
             if (duel.Phase == DuelPhase.Won) ShowResult("Victory");
             else Notify(cast switch
             {
-                CastResult.Interrupt => "Lightning interrupted the strike",
-                CastResult.FocusHit => "Focused strike! The exposed crystal took extra damage",
+                CastResult.Interrupt => power + "Lightning interrupted the strike",
+                CastResult.FocusHit => power + "Focused strike! The exposed crystal took extra damage",
                 CastResult.Shield => "Ward ready for the next strike",
                 CastResult.Miss => "The spell missed",
-                _ => target == ArenaTarget.Core ? "Crystal core hit" : "Muse hit"
+                _ => power + (target == ArenaTarget.Core ? "Crystal core hit" : "Muse hit")
             });
         }
 
@@ -801,8 +876,9 @@ namespace Runeveil
         void ClearStroke()
         {
             chargeMatchedFor = 0f;
-            pendingCharge = null;
+            pendingKey = -1;
             chargedThisStroke = false;
+            chargeSegmentStart = 0;
             nextChargeCheck = 0f;
             drawing = false;
             strokeHand = null;
