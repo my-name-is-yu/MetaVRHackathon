@@ -1,70 +1,65 @@
-# Save Muse! — Competition Submission Draft
+# Save Muse! — Competition Submission Packet
 
-**Status:** Local draft only; not submitted. Track and division remain subject to the event rules and the team's dated project provenance. The build invite and public demo URL are still to be added.
+**Private working packet.** The Devpost entry has not been submitted. Representative `my-name-is-yu` owns the video publication and Devpost submission. The public video URL is pending; the Google Drive file is not a public link.
 
-## Entry copy
+## Public Devpost copy
 
-**Title:** Save Muse!
+### Title
 
-**Tagline (87/140 characters):** Trace a spell with a pinch, find Muse's weak point with your gaze, and break the curse.
+Save Muse!
 
-**Track:** Gaming
+### Tagline
 
-**Division:** New — provisional. Confirm the event's New Experience rule against the project's dated provenance and Meta-template exception before choosing it. If any prior experience or code is reused, choose Adapted only if the change meets the event's significant-update requirement and document the change.
+Trace a spell with a pinch, find Muse's weak point with your gaze, and break the curse.
 
-**Description (draft):**
+### Description
 
-Save Muse! is a short boss duel about rescuing Muse from a dark curse. Pinch your thumb and index finger to trace an elemental spell, look at her glowing weak point, and release to attack. Hold your gaze on a target through Muse's raised-fist wind-up to expose it. Time a horizontal barrier to block a punch, or use lightning to interrupt it while a weak point is glowing. Five weak points, spell cooldowns, and a faster enraged phase test attention and timing. Win the duel to break the curse and save Muse. The experience includes a practice phase, a boss duel, and a victory state.
+Save Muse! is a short boss duel about rescuing Muse from a dark curse. Pinch your thumb and index finger to trace an elemental spell, look at her glowing weak point, and release to attack. Hold your gaze through Muse's raised-fist wind-up to expose a target. Time a horizontal barrier to block a punch, or cast lightning to interrupt it while a weak point is glowing. Five weak points, spell cooldowns, and a faster enraged phase test attention and timing. The idea was to make drawing create the spell and looking choose its target. Built in Unity, the game compares each pinch trace with rune shapes and locks the target when the spell releases. Next, we will test whether new players learn their first cast quickly and can read Muse's attack cues under pressure.
 
-**Hand interaction response (optional):** Pinch thumb and index finger to draw a spell from the on-screen guide; release while looking at the intended target to cast. Short pinches activate the title and rematch controls.
+### Optional hand interaction response
 
-**Target launch date if unpublished:** For the representative to confirm; not set in this draft.
+Pinch thumb and index finger to trace a spell from the on-screen guide; release while looking at the intended target to cast. Short pinches activate the title and rematch controls.
 
-**Team:** Four-person team: `my-name-is-yu` (representative; input implementation), `Yasei-no-otoko` (eye gaze and boss combat), `hattori8` (spell effects and music implementation), and `lockdef` (combat tuning). Enter participant emails only in the official submission form, not in this repository. Music composition remains credited to the composers listed below.
+### Team
 
-## Player instructions for judges
+`my-name-is-yu` (representative; input implementation), `Yasei-no-otoko` (eye gaze and boss combat), `hattori8` (spell effects and music implementation), and `lockdef` (combat tuning). Enter participant emails only in the official form.
 
-1. At the title screen, follow the visible `Start duel` prompt and use the indicated short-pinch interaction to begin.
-2. Pinch and trace a spell gesture from the on-screen guide, then release while looking at Muse's active weak point.
-3. During her raised-fist wind-up, hold your gaze on the intended part until the target cue closes. Cast lightning at a glowing weak point to interrupt an attack, or draw a horizontal barrier shortly before the punch lands.
-4. Follow the cooldown display and target cues. After victory, follow the visible rematch prompt if you want to play again.
+## Public entry fields for the representative to confirm
 
-## Representative-only submission checklist
+- **Track:** Gaming.
+- **Division:** New is provisional. Confirm it against the event's New Experience rule, including the Meta-template exception, and the team's dated project provenance before selection; use the Adapted criteria if New is not eligible.
+- **Target launch date, if unpublished:** Representative to confirm.
+- **Demo video URL:** Pending. Add only after the representative publishes and verifies a public YouTube or Vimeo URL.
 
-- Use the exact signed competition build from the private prerelease. Create or select Save Muse!'s dedicated Competition channel, enable its invite, and verify judge access with the invite URL.
-- Confirm the official team roster, roles, and public display names; supply emails only in the official form.
-- Confirm New vs Adapted from dated source history and the live event rules, including the Meta-template exception.
-- Confirm the target launch date if the experience is unpublished.
-- Add the final demo URL from an authorized user-controlled YouTube or Vimeo channel. Check that it plays publicly without sign-in.
-- Submit the exact entry using the representative's authenticated Devpost account and save the submission receipt. Confirm judge access through the winner-announcement period.
+## Judge instructions
 
-## Demo video plan (English captions; keep under three minutes)
+1. At the title screen, follow the visible `Start duel` prompt and use the indicated short-pinch interaction.
+2. Pinch and trace a spell from the on-screen guide, then release while looking at Muse's active weak point.
+3. During her raised-fist wind-up, hold your gaze on the intended target until its cue closes. Cast lightning at a glowing weak point to interrupt an attack, or draw a horizontal barrier shortly before the punch lands.
+4. Follow the cooldown display and target cues. After victory, follow the visible rematch prompt to play again.
 
-Build a concise cut from actual gameplay, with gameplay filling the frame throughout. Use the short gameplay span that opens on Muse's attack cue and ends on the recorded Victory state; omit the old in-game title/menu sequence. Burn in short English captions in a clear safe area so the demo works without narration. Keep each caption tied to the visible action, avoid claims about a restored-form shot, and stop at the real victory screen. Do not pad the video to a target duration.
+## Representative-only handoff checklist
 
-| Order | Gameplay beat | Caption |
-|---|---|---|
-| 1 | Open on the actual incoming attack cue. | `Save Muse!` / `Read the cue. Find the weak point.` |
-| 2 | Show the traced fire spell and its release. | `Trace a spell, then release.` |
-| 3 | Show the weak-point hit and the on-screen shatter message. | `Strike the exposed weak point.` |
-| 4 | End on the real Victory result. | `Victory. Muse is saved.` |
+**Do not paste this section into public Devpost fields.**
 
-Keep source provenance, exact take ranges, and technical QA notes in the ignored private verification receipt under `Recordings/Verification/`, outside this submission draft. Attach only the reviewed final MP4 to the private release or hand-off. Make a thumbnail only from a frame in the final reviewed gameplay footage.
+- **Owner/status:** `my-name-is-yu` is the designated representative and will handle the Competition channel/invite, public video publication, and Devpost submission. These actions are pending.
+- **Verified candidate APK:** [Private prerelease page](https://github.com/my-name-is-yu/MetaVRHackathon/releases/tag/save-muse-competition-candidate-0.2.3-2026-11-18) · [APK asset](https://github.com/my-name-is-yu/MetaVRHackathon/releases/download/save-muse-competition-candidate-0.2.3-2026-11-18/Save-Muse-0.2.3-release.apk). Asset: `Save-Muse-0.2.3-release.apk`; verified SHA-256: `397b1244bcde2ea4b5741b406c9d1fde0c46beba30722186f62cb4dd47da9073`. This GitHub prerelease is the APK handoff, not the competition judge invite.
+- **Competition judge access:** Create or select Save Muse!'s dedicated Competition channel, enable its invite, and verify judge access. Share the invite only through the official private submission field.
+- **Video delivery:** `Save Muse! - Competition Demo.mp4` is saved to the team's Google Drive. Verified export: 32.000 s, 36,479,770 bytes, SHA-256 `b0378f14364e6d3fd597017851a2175c80f11091c54ac85249db6e8e7303f95d` (H.264, 1920×1080, 30 fps; AAC stereo, 48 kHz). The Drive file is private. Public video URL is still pending: publish from the team's authorized YouTube or Vimeo channel, check public playback without sign-in, then add that URL to Devpost. Do not put personal Drive source links or a private Drive URL in public Devpost fields.
+- Confirm the roster and public display names. Supply emails only in the official form.
+- Confirm the New vs Adapted division and target launch date if the experience is unpublished.
+- Submit through the representative's authenticated Devpost account, save the submission receipt, and verify judge access through the winner-announcement period.
 
-## Audio rights checked
+## Private video and music record
 
-The project credits three OpenTracks works in [`Assets/Runeveil/BGM_CREDITS.md`](../Assets/Runeveil/BGM_CREDITS.md): “ancient ruins” by Maniira, “wait in the deep” by alaki paca, and “栄光のファンファーレ” by t.tam. The official [OpenTracks Audio Source Usage License](https://opentracks.com/en/help/articles/license/) lists video-contest submissions and online video distribution among background-music uses, allows ordinary editing, and says credits are not required. It prohibits standalone audio redistribution, making the audio the primary content, and registering the audio in Content ID or fingerprinting systems. The alaki paca profile adds that adult-content use is allowed; the other two composer profiles defer to the site license. Both provided source recordings have AAC tracks that decode as digital silence, so use English captions without adding a soundtrack. The in-game music remains credited in the project; do not publish extracted tracks or register them in Content ID.
+The final cut uses both user-supplied gameplay recordings, ends on the actual Victory result, and carries English on-screen captions. Source provenance and exact edit ranges are in the ignored local receipt `Recordings/Verification/FinalVideoReceipt.md`; keep that provenance record out of public Devpost fields.
 
-Official track pages: [“ancient ruins” — Maniira](https://opentracks.com/en/bgm/detail/19646), [“wait in the deep” — alaki paca](https://opentracks.com/en/bgm/detail/13633), [“栄光のファンファーレ” — t.tam](https://opentracks.com/en/bgm/detail/4668). License checked 2026-11-18.
+The final soundtrack is integrated into the gameplay video: `wait in the deep` by alaki paca and `栄光のファンファーレ` by t.tam, from OpenTracks. `hattori8` implemented music playback; composition remains credited to the composers. The official [OpenTracks Audio License](https://opentracks.com/help/articles/license/) permits background music in videos and games and ordinary editing, while prohibiting standalone audio distribution and audio fingerprint/Content ID registration. Keep the tracks embedded in the video and do not publish them separately.
 
-## Completion gates
-
-- [ ] Verify the title and rematch interaction against the final build.
-- [ ] Confirm the competition release, judge invite, and public demo URL.
-- [ ] Review the actual gameplay edit, keep it under three minutes, and verify captions, audio rights, and playback.
-
-## References
+## Official references
 
 - [Meta VR Start Developer Competition 2026](https://start-developer-competition-26.devpost.com/)
 - [Competition rules](https://start-developer-competition-26.devpost.com/rules)
-- [OpenTracks Audio Source Usage License](https://opentracks.com/en/help/articles/license/)
+- [Judging details](https://start-developer-competition-26.devpost.com/details/judging)
+- [OpenTracks track: `wait in the deep`](https://opentracks.com/en/bgm/detail/13633)
+- [OpenTracks track: `栄光のファンファーレ`](https://opentracks.com/en/bgm/detail/4668)
