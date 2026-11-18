@@ -53,7 +53,6 @@ namespace Runeveil
             MuseEyes = Group(museRig.Head, "Muse eye midpoint");
             MuseEyes.position = boss.TransformPoint(new Vector3(0f, 2.74f, -0.8f));
             for (int i = 0; i < weakAnchors.Length; i++) weakAnchors[i] = museRig.WeakPoint(i);
-            BuildRigWeakPointCues(arenaShader);
             Core = weakAnchors[ArenaTarget.Core.WeakPointIndex()];
             return true;
         }
@@ -152,40 +151,28 @@ namespace Runeveil
 
         private void BuildRigWeakPointCues(Shader arenaShader)
         {
-            Material ink = CreateMaterial(arenaShader, "Weak point cue", 0f, 0f, BlendMode.OneMinusSrcAlpha);
-            var outline = new Geometry("Weak point target ring and pointer");
+            Material ink = CreateMaterial(arenaShader, "Chest crystal outline", 0f, 0f, BlendMode.OneMinusSrcAlpha);
+            Mesh cornerMesh = focusCorners.GetComponent<MeshFilter>().sharedMesh;
             var fragments = new Geometry("Weak crystal fragments");
-            const int keyline = 0x17101e;
-            const int targetLight = 0xffffd2;
-            Vector3[] circle = Arc(Vector3.zero, 1f, 1f, 0f, 360f, 36);
-            for (int i = 0; i < circle.Length - 1; i++)
-            {
-                Vector3 from = circle[i];
-                Vector3 to = circle[i + 1];
-                AddWeakCueBand(outline, from, to, 0.282f, 0.314f, keyline);
-                AddWeakCueBand(outline, from, to, 0.314f, 0.388f, targetLight);
-                AddWeakCueBand(outline, from, to, 0.388f, 0.423f, keyline);
-            }
-            AddWeakCuePointer(outline, 0.465f, 0.648f, 0.147f, 0f, keyline);
-            AddWeakCuePointer(outline, 0.514f, 0.615f, 0.089f, -0.003f, targetLight);
-
             Vector3[] corners = { Vector3.up, Vector3.right, Vector3.down, Vector3.left };
             foreach (Vector3 corner in corners) AddFocusDiamond(fragments, corner * 0.22f);
-            Mesh outlineMesh = Track(outline.CreateMesh());
-            Mesh coreOutlineMesh = Track(BuildCoreWeakPointOutline(keyline).CreateMesh());
+            Mesh coreOutlineMesh = Track(BuildCoreWeakPointOutline().CreateMesh());
             Mesh fragmentMesh = Track(fragments.CreateMesh());
             for (int i = 0; i < rigWeakPointCues.Length; i++)
             {
+                var target = (ArenaTarget)((int)ArenaTarget.Core + i);
+                bool chest = target == ArenaTarget.Core;
                 Transform root = Group(boss, weakAnchors[i].name + " weak point cue");
-                Mesh mesh = i == ArenaTarget.Core.WeakPointIndex() ? coreOutlineMesh : outlineMesh;
-                MeshRenderer active = Render(root, "Active weak point outline", mesh, ink);
-                active.transform.localScale = Vector3.one * RigWeakPointScale(i);
+                MeshRenderer active = Render(root, "Active weak point outline", chest ? coreOutlineMesh : cornerMesh,
+                    chest ? ink : glow);
+                active.transform.localScale = chest ? Vector3.one * RigWeakPointScale(i) : FocusCueScale(target);
+                if (!chest) Tint(active, Rgb(FocusCornerColor), FocusCornerOpacity);
                 MeshRenderer broken = Render(root, "Weak point break fragments", fragmentMesh, glow);
                 rigWeakPointCues[i] = new RigWeakPointCue(root, active, broken);
             }
         }
 
-        private static Geometry BuildCoreWeakPointOutline(int keyline)
+        private static Geometry BuildCoreWeakPointOutline()
         {
             var outline = new Geometry("Faceted chest crystal outline");
             // Leave the 0.292 m by 0.412 m crystal visible through the frame.
@@ -194,6 +181,7 @@ namespace Runeveil
                 new(0f, 0.295f, 0f), new(-0.225f, 0.115f, 0f), new(-0.225f, -0.125f, 0f),
                 new(0f, -0.295f, 0f), new(0.225f, -0.125f, 0f), new(0.225f, 0.115f, 0f)
             };
+            const int keyline = 0x17101e;
             const int creamGold = 0xffe4ae;
             for (int i = 0; i < contour.Length; i++)
             {
@@ -221,24 +209,27 @@ namespace Runeveil
 
         private static float RigWeakPointScale(int index) => index == ArenaTarget.Core.WeakPointIndex() ? 1.07f : 0.86f;
 
-        private void TickRigWeakPointCues(int aimed, bool ready, bool won)
+        private void TickRigWeakPointCues(int aimed, int focusSite, bool ready, bool won)
         {
             int selected = won ? -1 : (ready ? aimed : activeWeak);
             museRig.ShowWeakPointCrystal(selected);
+            // The chest frame is distinct from the shared gaze brackets.
+            int chest = ArenaTarget.Core.WeakPointIndex();
+            bool showRecommendation = focusSite < 0 || (selected == chest && focusSite != chest);
             for (int i = 0; i < rigWeakPointCues.Length; i++)
             {
                 RigWeakPointCue cue = rigWeakPointCues[i];
                 float broken = won || i != brokenWeak ? 0f : Mathf.InverseLerp(0.43f, 1f, breakFlash);
-                cue.Outline.enabled = i == selected;
+                cue.Outline.enabled = i == selected && showRecommendation;
                 cue.Break.enabled = broken > 0f;
-                if (!cue.Outline.enabled && !cue.Break.enabled) continue;
+                if (!cue.Outline.enabled && !cue.Break.enabled && i != focusSite) continue;
 
                 Vector3 target = weakAnchors[i].position;
                 Vector3 direction = target - viewHead;
                 Quaternion facing = direction.sqrMagnitude > 0.0001f
                     ? Quaternion.LookRotation(direction, boss.up)
                     : boss.rotation;
-                float depth = i == ArenaTarget.Core.WeakPointIndex() ? 0.36f : 0.29f;
+                float depth = i == chest ? 0.36f : 0.29f;
                 cue.Root.SetPositionAndRotation(target - (facing * Vector3.forward) * depth, facing);
                 if (cue.Break.enabled)
                 {

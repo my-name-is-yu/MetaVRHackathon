@@ -285,13 +285,14 @@ namespace Runeveil
 
             string focus = target switch
             {
+                _ when duel.Finished => "",
                 _ when duel.ExposedTarget == target && target.IsWeakPoint() => $"{target.DisplayName()} exposed",
                 _ when target.IsWeakPoint() && duel.FocusProgress > 0 => $"Focusing on {target.DisplayName().ToLowerInvariant()}",
-                _ when target.IsWeakPoint() => target.DisplayName(),
+                _ when target.IsWeakPoint() && activeWeakPoint.IsWeakPoint() => target.DisplayName(),
                 ArenaTarget.Body => locked ? "Muse locked" : "Corrupted Muse",
                 _ => usingXr && !spellRay.HasValue ? "Eye gaze unavailable" : locked ? "Aim locked" : ""
             };
-            if (assumed) focus = $"Debug gaze · {focus}";
+            if (assumed && !duel.Finished) focus = $"Debug gaze · {focus}";
             string action = MenuAction;
             string status = Time.unscaledTime < noticeUntil ? notice : DefaultStatus(spellRay.HasValue);
             if (headMenuAim)
