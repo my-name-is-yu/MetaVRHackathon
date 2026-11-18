@@ -91,7 +91,7 @@ namespace Runeveil
         private float nextArcShape;
 
         // Sparks that trail the drawing fingertip.
-        private const int SparkCount = 72;
+        private const int SparkCount = 260;
         private Transform sparkRoot;
         private readonly MeshRenderer[] sparks = new MeshRenderer[SparkCount];
         private readonly Vector3[] sparkVelocity = new Vector3[SparkCount];
@@ -105,6 +105,26 @@ namespace Runeveil
         private bool hadSparkTip;
         private float chargeAge;
         private float chargeOpacity;
+        private int chargeLevel;
+
+        // Pooled flashes and shockwave rings for release and impact effects.
+        private const int FlareCount = 40;
+        private const int FireballFlames = 9;
+        private Transform flareRoot;
+        private Mesh ringMesh;
+        private Material ringGlow;
+        private readonly MeshRenderer[] flares = new MeshRenderer[FlareCount];
+        private readonly MeshFilter[] flareFilters = new MeshFilter[FlareCount];
+        private readonly float[] flareAge = new float[FlareCount];
+        private readonly float[] flareDelay = new float[FlareCount];
+        private readonly float[] flareLife = new float[FlareCount];
+        private readonly float[] flareFrom = new float[FlareCount];
+        private readonly float[] flareTo = new float[FlareCount];
+        private readonly float[] flareAlpha = new float[FlareCount];
+        private readonly Color[] flareColor = new Color[FlareCount];
+        private readonly Vector3[] flarePosition = new Vector3[FlareCount];
+        private int nextFlare;
+        private Vector3 viewHead;
 
         public Transform Core { get; private set; }
 
@@ -186,15 +206,25 @@ namespace Runeveil
             TickFocusIndicator(rising ? windup : -1f, aimed, focusProgress, focusReady);
         }
 
-        public void Cast(Spell spell, Vector3 from, Vector3 to, ArenaTarget target, Vector3 head, Vector3 forward)
+        /// <summary>Launches a spell. Returns its flight time in seconds (0 for Ward).</summary>
+        public float Cast(Spell spell, Vector3 from, Vector3 to, ArenaTarget target, Vector3 head, Vector3 forward,
+            int level = 1)
         {
+            viewHead = head;
+            level = Mathf.Max(1, level);
+            ReleaseBurst(spell, from, level);
             if (spell == Spell.Barrier)
             {
                 wardRoot.position = head - Vector3.up * 1.58f;
                 forward.y = 0f;
                 if (forward.sqrMagnitude > 0.01f) wardRoot.rotation = Quaternion.LookRotation(forward);
-                wardFlashTime = 0.66f;
-                return;
+                wardFlashTime = Mathf.Min(1f, 0.66f + 0.12f * (level - 1));
+                Vector3 front = head + (forward.sqrMagnitude > 0.01f ? forward.normalized : Vector3.forward) * 0.9f;
+                float power = LevelScale(level);
+                Flare(front, Rgb(0xb5ffe8), 0.6f, 0.2f, 2.2f * power, 0.7f, true);
+                Flare(front, Rgb(0x9ff2ce), 0.8f, 0.1f, 3f * power, 0.45f, true, 0.12f);
+                SparkBurst(front, Spell.Barrier, 20 + 10 * level, 2.2f * power, 2.5f, 1.6f);
+                return 0f;
             }
 
             Projectile shot = projectiles[nextProjectile];
@@ -204,10 +234,13 @@ namespace Runeveil
             shot.Age = 0f;
             shot.Arc = 0f;
             shot.Spell = spell;
+            shot.Level = level;
+            shot.Impacted = false;
             shot.Root.gameObject.SetActive(true);
             shot.Flash.gameObject.SetActive(false);
             shot.Bolt.gameObject.SetActive(spell == Spell.Lightning);
-            shot.Body.gameObject.SetActive(spell != Spell.Lightning);
+            shot.Body.gameObject.SetActive(spell != Spell.Lightning && spell != Spell.Fire);
+            shot.FlameRoot.gameObject.SetActive(spell == Spell.Fire);
             Vector3 direction = to - from;
             shot.Flash.transform.rotation = direction.sqrMagnitude > 0.0001f
                 ? Quaternion.LookRotation(direction) : Quaternion.identity;
@@ -247,7 +280,11 @@ namespace Runeveil
                     shot.Size = Vector3.one;
                     break;
             }
+            float levelScale = LevelScale(level);
+            shot.Size *= levelScale;
             shot.Body.localScale = shot.Size;
+            shot.Trail.widthMultiplier = levelScale;
+            shot.Bolt.widthMultiplier = levelScale;
             Color bodyColor = spell == Spell.Rock ? shot.Color : Color.Lerp(shot.Color, Color.white, 0.3f);
             Tint(shot.Renderer, bodyColor, 1f);
             Tint(shot.Bolt, shot.Color, 0.9f);
@@ -255,7 +292,9 @@ namespace Runeveil
             MoveProjectile(shot, 0f);
 
             if (target != ArenaTarget.Miss)
-                flinch = spell == Spell.Lightning && target == ArenaTarget.Core ? 1f : Mathf.Max(flinch, 0.33f);
+                flinch = spell == Spell.Lightning && target == ArenaTarget.Core ? 1f
+                    : Mathf.Max(flinch, Mathf.Min(1f, 0.33f + 0.15f * (level - 1)));
+            return shot.Duration;
         }
 
         public void Impact(bool blocked)
@@ -648,6 +687,7 @@ namespace Runeveil
         public void TickSparks(bool emit, Vector3 tip, float speed, Spell? style, float amount, Vector3 head, float dt)
         {
             if (sparkRoot == null) return;
+            viewHead = head;
             dt = Mathf.Clamp(dt, 0f, 0.05f);
             if (emit && dt > 0f)
             {
@@ -709,18 +749,158 @@ namespace Runeveil
             }
         }
 
-        private void SpawnSpark(Vector3 at, Vector3 inherit, Spell? style)
+        private void SpawnSpark(Vector3 at, Vector3 inherit, Spell? style, float speedScale = 1f, float sizeScale = 1f,
+            float lifeScale = 1f)
         {
             int i = nextSpark;
             nextSpark = (nextSpark + 1) % SparkCount;
             sparkAge[i] = 0f;
-            sparkLife[i] = UnityEngine.Random.Range(0.2f, 0.48f);
-            sparkSize[i] = UnityEngine.Random.Range(0.004f, 0.009f) * (style.HasValue ? 1.25f : 1f);
+            sparkLife[i] = UnityEngine.Random.Range(0.2f, 0.48f) * lifeScale;
+            sparkSize[i] = UnityEngine.Random.Range(0.004f, 0.009f) * (style.HasValue ? 1.25f : 1f) * sizeScale;
             sparkStyle[i] = style.HasValue ? (int)style.Value : -1;
-            sparkVelocity[i] = UnityEngine.Random.onUnitSphere * UnityEngine.Random.Range(0.12f, 0.5f) +
-                Vector3.up * 0.08f + inherit;
+            sparkVelocity[i] = UnityEngine.Random.onUnitSphere * (UnityEngine.Random.Range(0.12f, 0.5f) * speedScale) +
+                Vector3.up * (0.08f * speedScale) + inherit;
             sparks[i].transform.position = at;
             sparks[i].gameObject.SetActive(true);
+        }
+
+        private void BuildFlares()
+        {
+            flareRoot = Group(stage, "Release and impact flares");
+            var ring = new Geometry("Shockwave ring");
+            const int segments = 48;
+            for (int k = 0; k < segments; k++)
+            {
+                float a0 = k * Mathf.PI * 2f / segments;
+                float a1 = (k + 1) * Mathf.PI * 2f / segments;
+                Vector3 i0 = new Vector3(Mathf.Cos(a0), Mathf.Sin(a0), 0f) * 0.42f;
+                Vector3 i1 = new Vector3(Mathf.Cos(a1), Mathf.Sin(a1), 0f) * 0.42f;
+                Vector3 o0 = new Vector3(Mathf.Cos(a0), Mathf.Sin(a0), 0f) * 0.5f;
+                Vector3 o1 = new Vector3(Mathf.Cos(a1), Mathf.Sin(a1), 0f) * 0.5f;
+                ring.Quad(i0, i1, o1, o0, 0xffffff);
+            }
+            ringMesh = Track(ring.CreateMesh());
+            ringGlow = Track(new Material(glow) { name = "Shockwave light" });
+            ringGlow.SetFloat("_Cull", (float)CullMode.Off);
+            for (int i = 0; i < FlareCount; i++)
+            {
+                flares[i] = Render(flareRoot, "Flare", softDisc, softGlow);
+                flareFilters[i] = flares[i].GetComponent<MeshFilter>();
+                flares[i].gameObject.SetActive(false);
+                flareAge[i] = -1f;
+            }
+        }
+
+        /// <summary>Queues a billboarded flash (disc) or expanding shockwave (ring).</summary>
+        private void Flare(Vector3 at, Color color, float life, float fromSize, float toSize, float alpha, bool ring,
+            float delay = 0f)
+        {
+            int i = nextFlare;
+            nextFlare = (nextFlare + 1) % FlareCount;
+            flareAge[i] = 0f;
+            flareDelay[i] = delay;
+            flareLife[i] = life;
+            flareFrom[i] = fromSize;
+            flareTo[i] = toSize;
+            flareAlpha[i] = alpha;
+            flareColor[i] = color;
+            flarePosition[i] = at;
+            flareFilters[i].sharedMesh = ring ? ringMesh : softDisc;
+            flares[i].sharedMaterial = ring ? ringGlow : softGlow;
+            flares[i].gameObject.SetActive(false);
+        }
+
+        private void TickFlares(float dt)
+        {
+            for (int i = 0; i < FlareCount; i++)
+            {
+                if (flareAge[i] < 0f) continue;
+                if (flareDelay[i] > 0f)
+                {
+                    flareDelay[i] -= dt;
+                    continue;
+                }
+                flareAge[i] += dt;
+                float life = flareAge[i] / flareLife[i];
+                if (life >= 1f)
+                {
+                    flareAge[i] = -1f;
+                    flares[i].gameObject.SetActive(false);
+                    continue;
+                }
+                if (!flares[i].gameObject.activeSelf) flares[i].gameObject.SetActive(true);
+                Transform flare = flares[i].transform;
+                flare.position = flarePosition[i];
+                Vector3 facing = flarePosition[i] - viewHead;
+                if (facing.sqrMagnitude > 0.0001f) flare.rotation = Quaternion.LookRotation(facing, Vector3.up);
+                float eased = 1f - (1f - life) * (1f - life) * (1f - life);
+                flare.localScale = Vector3.one * Mathf.Lerp(flareFrom[i], flareTo[i], eased);
+                Tint(flares[i], flareColor[i], flareAlpha[i] * (1f - life) * (1f - life * 0.4f));
+            }
+        }
+
+        private void SparkBurst(Vector3 at, Spell? style, int count, float speed, float size, float life = 1f)
+        {
+            for (int k = 0; k < count; k++)
+                SpawnSpark(at, Vector3.zero, style, speed * UnityEngine.Random.Range(0.6f, 1.4f), size, life);
+        }
+
+        private static Color SpellColor(Spell spell) => spell switch
+        {
+            Spell.Fire => Rgb(0xff7a3d),
+            Spell.Lightning => Rgb(0xffd96a),
+            Spell.Ice => Rgb(0x8fdcff),
+            Spell.Wind => Rgb(0xc7aaff),
+            Spell.Rock => Rgb(0xe0a985),
+            _ => Rgb(0x9ff2ce)
+        };
+
+        // Burst at the hand the moment the spell is let go.
+        private void ReleaseBurst(Spell spell, Vector3 from, int level)
+        {
+            float power = LevelScale(level);
+            Color color = SpellColor(spell);
+            Flare(from, Color.white, 0.16f, 0.03f, 0.16f * power, 0.95f, false);
+            Flare(from, color, 0.3f, 0.05f, 0.3f * power, 0.85f, false);
+            Flare(from, color, 0.42f, 0.03f, 0.42f * power, 0.9f, true);
+            if (level >= 3) Flare(from, Color.Lerp(color, Color.white, 0.5f), 0.55f, 0.03f, 0.65f * power, 0.7f, true, 0.06f);
+            Spell? style = spell == Spell.Rock ? null : spell;
+            SparkBurst(from, style, 18 + 8 * level, 1.6f * power, 1.3f, 1.1f);
+        }
+
+        // Explosion where the spell lands: core flash, double shockwave, flying debris sparks.
+        private void ImpactBurst(Projectile shot)
+        {
+            float power = LevelScale(shot.Level);
+            Vector3 at = shot.End - (shot.End - shot.Start).normalized * 0.06f;
+            Color color = SpellColor(shot.Spell);
+            Color bright = Color.Lerp(color, Color.white, 0.55f);
+            Flare(at, Color.white, 0.22f, 0.25f, 0.9f * power, 0.95f, false);
+            Flare(at, color, 0.5f, 0.4f, 1.9f * power, 0.75f, false);
+            Flare(at, bright, 0.55f, 0.2f, 2.6f * power, 0.9f, true);
+            Flare(at, color, 0.75f, 0.15f, 3.6f * power, 0.6f, true, 0.08f);
+            if (shot.Level >= 2) Flare(at, bright, 0.9f, 0.1f, 4.8f * power, 0.45f, true, 0.16f);
+            Spell? style = shot.Spell == Spell.Rock ? null : shot.Spell;
+            int count = 26 + 14 * shot.Level;
+            switch (shot.Spell)
+            {
+                case Spell.Fire:
+                    SparkBurst(at, Spell.Fire, count, 7f * power, 5f, 1.6f);
+                    SparkBurst(at, Spell.Fire, count / 2, 3f, 7f, 2.2f); // slow ember shower
+                    break;
+                case Spell.Ice:
+                    SparkBurst(at, Spell.Ice, count, 6f * power, 6.5f, 1.3f);
+                    break;
+                case Spell.Lightning:
+                    SparkBurst(at, Spell.Lightning, count + 10, 9f * power, 3.5f, 0.8f);
+                    break;
+                case Spell.Wind:
+                    SparkBurst(at, Spell.Wind, count, 5.5f * power, 4.5f, 1.8f);
+                    break;
+                default:
+                    SparkBurst(at, style, count, 5f * power, 6f, 1.5f);
+                    break;
+            }
         }
 
         private void BuildChargeEffect()
@@ -745,11 +925,13 @@ namespace Runeveil
         /// Shows the charged-spell effect at the fingertip, styled per element. Pass null to let it fade.
         /// Call every frame; a change of spell plays the charge-complete burst.
         /// </summary>
-        public void SetCharge(Spell? spell, Vector3 position, Vector3 head, float dt)
+        public void SetCharge(Spell? spell, int level, Vector3 position, Vector3 head, float dt)
         {
             if (chargeRoot == null) return;
+            viewHead = head;
             dt = Mathf.Clamp(dt, 0f, 0.05f);
-            if (spell.HasValue && spell != chargeSpell) chargeAge = 0f;
+            if (spell.HasValue && (spell != chargeSpell || level != chargeLevel)) chargeAge = 0f;
+            if (spell.HasValue) chargeLevel = Mathf.Max(1, level);
             if (spell.HasValue) chargeSpell = spell;
             chargeOpacity = spell.HasValue ? 1f : Mathf.Max(0f, chargeOpacity - dt * 9f);
             if (chargeOpacity <= 0f)
@@ -764,6 +946,8 @@ namespace Runeveil
             if (spell.HasValue) chargeRoot.position = position;
             Vector3 facing = chargeRoot.position - head;
             if (facing.sqrMagnitude > 0.0001f) chargeRoot.rotation = Quaternion.LookRotation(facing, Vector3.up);
+            // Each power level makes the charge visibly bigger.
+            chargeRoot.localScale = Vector3.one * LevelScale(chargeLevel);
 
             Spell style = chargeSpell ?? Spell.Fire;
             float a = chargeOpacity;
@@ -803,6 +987,8 @@ namespace Runeveil
                 Tint(chargeBurst, burstColor, (1f - burst) * 0.9f);
             }
         }
+
+        private static float LevelScale(int level) => 1f + 0.25f * (Mathf.Max(1, level) - 1);
 
         private static void ChargePalette(Spell spell, out Color halo, out Color core, out Color burst)
         {
@@ -964,6 +1150,7 @@ namespace Runeveil
         {
             BuildChargeEffect();
             BuildSparks();
+            BuildFlares();
             wardRoot = Group(stage, "Mint ward");
             var shell = new Geometry("Ward hemisphere");
             shell.Ward(new(0f, 0.13f, 0.29f), new(1.80f, 1.29f, 1.43f));
@@ -1008,7 +1195,16 @@ namespace Runeveil
                 var bolt = Line(root, "Lightning bolt", 10, 0.044f);
                 var trail = Line(root, "Spell trail", 8, 0.038f);
                 MeshRenderer flash = Render(root, "Impact flash", softDisc, softGlow);
-                projectiles[i] = new Projectile(root, projectileRenderer, bolt, trail, flash);
+                Transform flameRoot = Group(root, "Fireball flames");
+                var flames = new MeshRenderer[FireballFlames];
+                for (int k = 0; k < flames.Length; k++)
+                    flames[k] = Render(flameRoot, "Fireball flame", softDisc, softGlow);
+                projectiles[i] = new Projectile(root, projectileRenderer, bolt, trail, flash)
+                {
+                    Glow = Render(root, "Projectile glow", softDisc, softGlow),
+                    FlameRoot = flameRoot,
+                    Flames = flames
+                };
             }
         }
 
@@ -1027,6 +1223,7 @@ namespace Runeveil
                 Tint(wardFlash, Rgb(0xb5ffe8), wardFlashTime * 0.77f);
             }
 
+            TickFlares(dt);
             foreach (Projectile shot in projectiles)
             {
                 if (shot.Age < 0f) continue;
@@ -1036,7 +1233,13 @@ namespace Runeveil
                 if (progress < 1f)
                 {
                     MoveProjectile(shot, progress);
+                    EmitTrailSparks(shot, progress, dt);
                     continue;
+                }
+                if (!shot.Impacted)
+                {
+                    shot.Impacted = true;
+                    ImpactBurst(shot);
                 }
                 if (after > 0.24f)
                 {
@@ -1047,10 +1250,63 @@ namespace Runeveil
                 shot.Body.gameObject.SetActive(false);
                 shot.Bolt.gameObject.SetActive(false);
                 shot.Trail.gameObject.SetActive(false);
+                shot.Glow.gameObject.SetActive(false);
+                shot.FlameRoot.gameObject.SetActive(false);
                 shot.Flash.gameObject.SetActive(true);
                 shot.Flash.transform.position = shot.End - (shot.End - shot.Start).normalized * 0.045f;
-                shot.Flash.transform.localScale = Vector3.one * (0.37f + after * 5f);
+                shot.Flash.transform.localScale = Vector3.one * (0.37f + after * 5f) * LevelScale(shot.Level);
                 Tint(shot.Flash, shot.Color, 0.88f * (1f - after / 0.24f));
+            }
+        }
+
+        private void EmitTrailSparks(Projectile shot, float progress, float dt)
+        {
+            shot.SparkBudget += dt * (55f + 30f * shot.Level);
+            Spell? style = shot.Spell == Spell.Rock ? null : shot.Spell;
+            while (shot.SparkBudget >= 1f)
+            {
+                shot.SparkBudget -= 1f;
+                Vector3 at = shot.Spell == Spell.Lightning
+                    ? shot.Bolt.GetPosition(UnityEngine.Random.Range(0, shot.Bolt.positionCount))
+                    : ShotPosition(shot, Mathf.Max(0f, progress - UnityEngine.Random.value * 0.04f));
+                float distance = Vector3.Distance(at, viewHead);
+                SpawnSpark(at, Vector3.zero, style, 1.2f + distance * 0.25f, 1.2f + distance * 0.55f, 0.9f);
+            }
+        }
+
+        // A fireball is drawn as flickering tongues of flame that stream back from the direction of travel.
+        private void MoveFireball(Projectile shot, float progress, Vector3 at)
+        {
+            shot.Body.gameObject.SetActive(false);
+            Vector3 facing = at - viewHead;
+            Vector3 travel = ShotPosition(shot, Mathf.Min(1f, progress + 0.03f)) - at;
+            Vector3 back = facing.sqrMagnitude > 0.0001f ? Vector3.ProjectOnPlane(-travel, facing.normalized) : -travel;
+            // Flames lick backwards and a little upwards, like a real fire in motion.
+            back = back.sqrMagnitude > 1e-8f ? back.normalized : Vector3.up;
+            back = (back + Vector3.up * 0.35f).normalized;
+            if (facing.sqrMagnitude > 0.0001f) shot.FlameRoot.rotation = Quaternion.LookRotation(facing, back);
+            shot.FlameRoot.position = at;
+
+            float size = shot.Size.x;
+            float t = shot.Age;
+            for (int k = 0; k < shot.Flames.Length; k++)
+            {
+                float phase = k * 1.91f;
+                float flicker = 0.7f + 0.3f * Mathf.Sin(t * (19f + k * 3.7f) + phase) +
+                    0.15f * Mathf.Sin(t * (37f + k * 5.3f) + phase * 1.7f);
+                bool inner = k < 3;
+                float spread = inner ? (k - 1) * 0.18f : ((k - 3) - 2.5f) * 0.3f;
+                float length = size * (inner ? 2.1f : 3.1f - Mathf.Abs(spread) * 1.6f) * flicker;
+                float width = size * (inner ? 0.85f : 1.05f) * (0.85f + 0.15f * flicker);
+                float sway = Mathf.Sin(t * 13f + phase) * 0.12f;
+                Transform flame = shot.Flames[k].transform;
+                flame.localPosition = new Vector3((spread + sway * 0.5f) * size, length * 0.38f, inner ? -0.01f : 0.01f * k);
+                flame.localRotation = Quaternion.Euler(0f, 0f, -(spread + sway) * 40f);
+                flame.localScale = new Vector3(width, length, 1f);
+                Color color = inner
+                    ? Color.Lerp(Rgb(0xfff0b0), Rgb(0xffc04d), k * 0.4f)
+                    : Color.Lerp(Rgb(0xff8a2e), Rgb(0xff3a14), 0.5f + 0.5f * Mathf.Sin(phase + t * 6f));
+                Tint(shot.Flames[k], color, (inner ? 0.95f : 0.8f) * (0.8f + 0.2f * flicker));
             }
         }
 
@@ -1058,12 +1314,27 @@ namespace Runeveil
         {
             bool bolts = shot.Spell == Spell.Lightning;
             shot.Trail.gameObject.SetActive(!bolts && progress > 0.01f);
+            shot.Glow.gameObject.SetActive(!bolts);
             if (bolts)
             {
+                shot.FlameRoot.gameObject.SetActive(false);
+                // Re-strike the bolt every few frames so it crackles in flight.
+                if (UnityEngine.Random.value < 0.5f) ShapeBolt(shot.Bolt, shot.Start, shot.End, UnityEngine.Random.value * 10f);
                 Tint(shot.Bolt, Color.Lerp(shot.Color, Color.white, 0.57f), 0.90f - progress * 0.55f);
                 return;
             }
             Vector3 at = ShotPosition(shot, progress);
+            bool fire = shot.Spell == Spell.Fire;
+            shot.FlameRoot.gameObject.SetActive(fire);
+            if (fire) MoveFireball(shot, progress, at);
+            Transform glowing = shot.Glow.transform;
+            glowing.position = at;
+            Vector3 facing = at - viewHead;
+            if (facing.sqrMagnitude > 0.0001f) glowing.rotation = Quaternion.LookRotation(facing, Vector3.up);
+            float pulse = 1f + 0.12f * Mathf.Sin(shot.Age * 40f);
+            // Keep the fireball's aura faint so the flame shapes, not a round disc, read first.
+            glowing.localScale = Vector3.one * (shot.Size.x * (fire ? 2.8f : 4.2f) * pulse);
+            Tint(shot.Glow, shot.Color, fire ? 0.35f : 0.7f);
             Vector3 ahead = ShotPosition(shot, progress + 0.025f);
             shot.Body.position = at;
             if ((ahead - at).sqrMagnitude > 0.0001f) shot.Body.rotation = Quaternion.LookRotation(ahead - at);
@@ -1076,15 +1347,15 @@ namespace Runeveil
             return Vector3.LerpUnclamped(shot.Start, shot.End, t) + Vector3.up * (Mathf.Sin(t * Mathf.PI) * shot.Arc);
         }
 
-        private static void ShapeBolt(LineRenderer line, Vector3 start, Vector3 end)
+        private static void ShapeBolt(LineRenderer line, Vector3 start, Vector3 end, float seed = 0f)
         {
             Vector3 cross = Vector3.Cross(end - start, Vector3.up).normalized;
             for (int i = 0; i < line.positionCount; i++)
             {
                 float t = i / (line.positionCount - 1f);
-                float noise = Mathf.Sin(t * 29f) * Mathf.Sin(t * Mathf.PI);
+                float noise = Mathf.Sin(t * 29f + seed) * Mathf.Sin(t * Mathf.PI);
                 line.SetPosition(i, Vector3.Lerp(start, end, t) + cross * (noise * 0.18f) +
-                    Vector3.up * (Mathf.Cos(t * 42f) * Mathf.Sin(t * Mathf.PI) * 0.15f));
+                    Vector3.up * (Mathf.Cos(t * 42f + seed * 1.7f) * Mathf.Sin(t * Mathf.PI) * 0.15f));
             }
         }
 
@@ -1216,6 +1487,12 @@ namespace Runeveil
             public readonly LineRenderer Bolt;
             public readonly LineRenderer Trail;
             public readonly MeshRenderer Flash;
+            public MeshRenderer Glow;
+            public Transform FlameRoot;
+            public MeshRenderer[] Flames;
+            public int Level = 1;
+            public bool Impacted;
+            public float SparkBudget;
             public Vector3 Start;
             public Vector3 End;
             public Vector3 Size;

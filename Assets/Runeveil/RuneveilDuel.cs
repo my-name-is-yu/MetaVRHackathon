@@ -73,9 +73,11 @@ namespace Runeveil
                 focusedSeconds = Mathf.Min(FocusSeconds, focusedSeconds + Mathf.Min(deltaTime, -attackIn));
         }
 
-        public CastResult Cast(Spell spell, ArenaTarget target, ArenaTarget exposedAtRelease = ArenaTarget.Miss)
+        /// <summary>Level 1 is a normal cast; each extra level adds 50% damage. Ward blocks one strike at any level.</summary>
+        public CastResult Cast(Spell spell, ArenaTarget target, ArenaTarget exposedAtRelease = ArenaTarget.Miss, int level = 1)
         {
             if (Finished) return CastResult.None;
+            level = Mathf.Max(1, level);
             if (spell == Spell.Barrier)
             {
                 Shield = true;
@@ -108,7 +110,9 @@ namespace Runeveil
 
             if (Phase == DuelPhase.Battle)
             {
-                BossHealth = Mathf.Max(0, BossHealth - damage - (coreHit ? 4 : 0) - (focused ? FocusBonus : 0));
+                int total = damage + (coreHit ? 4 : 0) + (focused ? FocusBonus : 0);
+                total = Mathf.RoundToInt(total * (1f + 0.5f * (level - 1)));
+                BossHealth = Mathf.Max(0, BossHealth - total);
                 if (BossHealth == 0)
                 {
                     Phase = DuelPhase.Won;

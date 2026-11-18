@@ -21,6 +21,9 @@ namespace Runeveil
         AudioClip drawClip;
         AudioClip castClip;
         AudioClip wardClip;
+        AudioClip impactClip;
+        AudioClip shatterClip;
+        AudioClip thunderClip;
         float drawLevel;
         float drawSpeed;
 
@@ -41,6 +44,9 @@ namespace Runeveil
             chargeClips[(int)Spell.Barrier] = Clip("Ward charge", 1.4f, WardCharge);
             castClip = Clip("Flame release", 0.8f, Cast);
             wardClip = Clip("Ward release", 0.7f, Ward);
+            impactClip = Clip("Impact boom", 1.3f, Impact);
+            shatterClip = Clip("Ice shatter", 1.1f, Shatter);
+            thunderClip = Clip("Thunder crack", 1.4f, Thunder);
             drawLoop.clip = drawClip;
             AddChargedLoop(Spell.Fire, LoopClip("Charged flame roar", 2.4f, 0.2f, FlameRoar));
             AddChargedLoop(Spell.Lightning, LoopClip("Charged electric buzz", 2f, 0.15f, ElectricBuzz));
@@ -76,16 +82,52 @@ namespace Runeveil
         public void PlayTouch(Vector3 at, RuneveilPinchSettings s) =>
             Play(touchClip, at, s.sfxVolume * s.touchVolume, Random.Range(0.95f, 1.06f));
 
-        public void PlayCharge(Spell spell, Vector3 at, RuneveilPinchSettings s) =>
-            Play(chargeClips[(int)spell], at, s.sfxVolume * s.chargeVolume, 1f);
+        /// <summary>Each power level plays the charge sound a little higher and brighter.</summary>
+        public void PlayCharge(Spell spell, int level, Vector3 at, RuneveilPinchSettings s)
+        {
+            float boost = 1f + 0.12f * (level - 1);
+            Play(chargeClips[(int)spell], at, Mathf.Min(1f, s.sfxVolume * s.chargeVolume * boost), 1f + 0.09f * (level - 1));
+            if (level > 1) Play(touchClip, at, s.sfxVolume * s.chargeVolume * 0.8f, 1.2f + 0.15f * level);
+        }
 
-        public void PlayCast(Spell spell, Vector3 at, RuneveilPinchSettings s)
+        /// <summary>Explosion where the spell lands, scheduled to match its flight time.</summary>
+        public void PlayImpact(Spell spell, int level, Vector3 at, float delay, RuneveilPinchSettings s)
+        {
+            if (spell == Spell.Barrier) return;
+            float volume = Mathf.Min(1f, s.sfxVolume * s.impactVolume * (0.8f + 0.12f * level));
+            float pitch = 1f - 0.06f * (level - 1);
+            switch (spell)
+            {
+                case Spell.Ice:
+                    Play(shatterClip, at, volume, pitch, delay);
+                    Play(impactClip, at, volume * 0.5f, pitch * 1.3f, delay);
+                    break;
+                case Spell.Lightning:
+                    Play(thunderClip, at, volume, pitch, delay);
+                    break;
+                case Spell.Wind:
+                    Play(impactClip, at, volume * 0.6f, pitch * 1.5f, delay);
+                    Play(chargeClips[(int)Spell.Wind], at, volume * 0.7f, 1.4f, delay);
+                    break;
+                case Spell.Rock:
+                    Play(impactClip, at, volume, pitch * 0.8f, delay);
+                    break;
+                default:
+                    Play(impactClip, at, volume, pitch, delay);
+                    break;
+            }
+        }
+
+        public void PlayCast(Spell spell, Vector3 at, RuneveilPinchSettings s, int level = 1)
         {
             if (spell == Spell.Barrier)
             {
                 Play(wardClip, at, s.sfxVolume * s.castVolume, 1f);
+                if (level > 1) Play(chargeClips[(int)Spell.Barrier], at, s.sfxVolume * s.castVolume * 0.6f, 1f + 0.08f * level);
                 return;
             }
+            // A powered-up cast gets a deeper, heavier launch.
+            if (level > 1) Play(impactClip, at, s.sfxVolume * s.castVolume * (0.25f + 0.1f * level), 1.6f - 0.1f * level);
             float pitch = spell switch
             {
                 Spell.Lightning => 1.45f,
@@ -138,7 +180,7 @@ namespace Runeveil
             }
         }
 
-        void Play(AudioClip clip, Vector3 at, float volume, float pitch)
+        void Play(AudioClip clip, Vector3 at, float volume, float pitch, float delay = 0f)
         {
             if (clip == null || volume <= 0f) return;
             // A fresh source per sound lets overlapping effects keep their own position and pitch.
@@ -147,8 +189,14 @@ namespace Runeveil
             source.pitch = pitch;
             source.volume = volume;
             source.clip = clip;
-            source.Play();
-            Destroy(source.gameObject, clip.length / Mathf.Max(0.1f, pitch) + 0.1f);
+            if (delay > 0f)
+            {
+                // Far impacts are heard more clearly than a near one would be.
+                source.spatialBlend = 0.45f;
+                source.PlayDelayed(delay);
+            }
+            else source.Play();
+            Destroy(source.gameObject, delay + clip.length / Mathf.Max(0.1f, pitch) + 0.1f);
         }
 
         // ---------- synthesis ----------
@@ -275,6 +323,60 @@ namespace Runeveil
                     low += Coefficient(900f) * (Noise(r) - low);
                     d[start + k] += low * amplitude * 3f * Mathf.Exp(-k / (length * 0.3f));
                 }
+            }
+        }
+
+        // Impact: deep boom, crunchy burst and a rumbling tail.
+        static void Impact(float[] d, System.Random r)
+        {
+            float low = 0f, rumble = 0f, phase = 0f;
+            for (int i = 0; i < d.Length; i++)
+            {
+                float t = i / (float)Rate;
+                float n = Noise(r);
+                low += Coefficient(Mathf.Lerp(300f, 5000f, Mathf.Exp(-t * 9f))) * (n - low);
+                rumble += Coefficient(160f) * (n - rumble);
+                phase += Tau * (38f + 80f * Mathf.Exp(-t * 11f)) / Rate;
+                float boom = Mathf.Sin(phase) * Mathf.Exp(-t * 4.5f) * 0.9f;
+                float burst = low * Mathf.Exp(-t * 7f) * Mathf.Clamp01(t * 400f) * 0.9f;
+                float tail = rumble * Mathf.Exp(-t * 2.6f) * 3.2f;
+                d[i] = boom + burst + tail;
+            }
+        }
+
+        // Ice impact: glassy shatter with scattered shards.
+        static void Shatter(float[] d, System.Random r)
+        {
+            float low = 0f;
+            for (int i = 0; i < d.Length; i++)
+            {
+                float t = i / (float)Rate;
+                float n = Noise(r);
+                low += Coefficient(3000f) * (n - low);
+                d[i] = (n - low) * Mathf.Exp(-t * 9f) * Mathf.Clamp01(t * 500f) * 0.8f;
+            }
+            for (int p = 0; p < 34; p++)
+            {
+                int start = (int)(Mathf.Pow((float)r.NextDouble(), 2f) * d.Length * 0.7f);
+                Ping(d, start, 2200f + (float)r.NextDouble() * 4200f, 28f + (float)r.NextDouble() * 30f,
+                    (0.1f + (float)r.NextDouble() * 0.25f) * (1f - start / (float)d.Length));
+            }
+        }
+
+        // Lightning impact: sharp crack followed by rolling thunder.
+        static void Thunder(float[] d, System.Random r)
+        {
+            float low = 0f, roll = 0f;
+            for (int i = 0; i < d.Length; i++)
+            {
+                float t = i / (float)Rate;
+                float n = Noise(r);
+                low += Coefficient(5500f) * (n - low);
+                roll += Coefficient(260f) * (n - roll);
+                float crack = (n - low * 0.3f) * Mathf.Exp(-t * 30f) * 0.9f;
+                float rumble = roll * (0.6f + 0.4f * Mathf.Sin(Tau * 3.3f * t) * Mathf.Sin(Tau * 1.1f * t)) *
+                    Mathf.Exp(-t * 2.2f) * Mathf.Clamp01(t * 12f) * 4f;
+                d[i] = crack + rumble;
             }
         }
 

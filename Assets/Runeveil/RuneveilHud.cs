@@ -165,8 +165,10 @@ namespace Runeveil
 
             if (!won)
             {
-                if (victoryIllustration.gameObject.activeSelf)
-                    victoryIllustration.gameObject.SetActive(false);
+                if (!victoryIllustration.gameObject.activeSelf)
+                    return;
+
+                victoryIllustration.gameObject.SetActive(false);
                 victoryFadeElapsed = 0f;
                 victoryIllustration.alpha = 0f;
                 return;
@@ -489,7 +491,7 @@ namespace Runeveil
                 return;
 
             const float maxWidth = 680f;
-            const float maxHeight = 540f;
+            const float maxHeight = 532f;
             float aspect = texture.width / (float)texture.height;
             float width = Mathf.Min(maxWidth, maxHeight * aspect);
             float height = width / aspect;
