@@ -14,9 +14,12 @@ namespace Runeveil
         const int MaxSamples = 1024;
         static readonly Color DrawingColor = new Color32(255, 218, 139, 255);
         static readonly Color ChargedFireColor = new Color32(255, 128, 66, 255);
+        static readonly Color ChargedLightningColor = new Color32(255, 213, 106, 255);
+        static readonly Color ChargedIceColor = new Color32(163, 228, 255, 255);
+        static readonly Color ChargedWindColor = new Color32(207, 182, 255, 255);
+        static readonly Color ChargedWardColor = new Color32(159, 242, 206, 255);
         static readonly Color HandLabelColor = new Color32(159, 242, 206, 255);
         const float ChargeCheckInterval = 0.05f;
-        const int ChargeConfirmations = 2;
 
         [SerializeField] Camera desktopView;
         [SerializeField] OVRCameraRig xrRig;
@@ -62,7 +65,26 @@ namespace Runeveil
         OVRHand chargeHand;
         Vector3 chargeAnchor;
         float nextChargeCheck;
-        int chargeMatches;
+        float chargeMatchedFor;
+        Spell? pendingCharge;
+        bool chargedThisStroke;
+
+        static bool Chargeable(Spell spell) => spell != Spell.Rock;
+
+        static Color ChargeColor(Spell spell) => spell switch
+        {
+            Spell.Fire => ChargedFireColor,
+            Spell.Lightning => ChargedLightningColor,
+            Spell.Ice => ChargedIceColor,
+            Spell.Wind => ChargedWindColor,
+            _ => ChargedWardColor
+        };
+
+        static string ChargeName(Spell spell) => spell switch
+        {
+            Spell.Barrier => "Ward",
+            _ => spell.ToString()
+        };
         Ray? pendingReleaseAim;
         float strokeStarted;
         float maxDisplacementSquared;
@@ -125,7 +147,7 @@ namespace Runeveil
             hud.SetActionFocus(usingXr ? aim : mousePointer);
             hud.SetHand(handPosition);
             hud.SetPinchMeter(usingXr && Pinch.showDebugMeter, leftPinch, rightPinch, Pinch);
-            if (drawing) hud.ShowStroke(points, chargedSpell == Spell.Fire ? ChargedFireColor : DrawingColor);
+            if (drawing) hud.ShowStroke(points, chargedSpell.HasValue ? ChargeColor(chargedSpell.Value) : DrawingColor);
             else if (strokeFadeUntil > 0)
             {
                 float opacity = Mathf.Clamp01((strokeFadeUntil - Time.unscaledTime) / 0.28f);
@@ -144,8 +166,8 @@ namespace Runeveil
             hadDrawTip = active;
 
             var settings = Pinch;
-            sfx.SetDrawing(active, tip, speed, settings, deltaTime);
-            arena.TickSparks(active && settings.sparks, tip, speed, chargedSpell == Spell.Fire,
+            sfx.SetDrawing(active, chargedSpell, tip, speed, settings, deltaTime);
+            arena.TickSparks(active && settings.sparks, tip, speed, chargedSpell,
                 settings.sparkAmount, view.transform.position, deltaTime);
         }
 
@@ -194,8 +216,11 @@ namespace Runeveil
         string DefaultStatus()
         {
             if (duel.Finished) return resultSummary;
-            if (chargedSpell == Spell.Fire && !drawing)
-                return usingXr ? "Fire charged — look at a target, pinch and release" : "Fire charged — click to cast";
+            if (chargedSpell.HasValue && !drawing)
+                return chargedSpell == Spell.Barrier
+                    ? (usingXr ? "Ward charged — pinch and release to raise it" : "Ward charged — click to raise it")
+                    : $"{ChargeName(chargedSpell.Value)} charged — " +
+                      (usingXr ? "look at a target, pinch and release" : "click to cast");
             if (duel.Windup >= 0) return "Fist rising! Strike the core with Lightning or draw a Ward";
             if (duel.Phase == DuelPhase.Battle) return "Aim for the crystal core";
             return "";
@@ -421,7 +446,8 @@ namespace Runeveil
 
         void RefreshHandLabel()
         {
-            if (chargedSpell == Spell.Fire) hud.SetHandLabel("FIRE READY", ChargedFireColor);
+            if (chargedSpell.HasValue)
+                hud.SetHandLabel(ChargeName(chargedSpell.Value).ToUpperInvariant() + " READY", ChargeColor(chargedSpell.Value));
             else hud.SetHandLabel("Drawing rune", HandLabelColor);
         }
 
@@ -451,22 +477,42 @@ namespace Runeveil
             CheckCharge();
         }
 
-        // Recognize the rune while the stroke is still being drawn. A completed circle
-        // charges Fire immediately; releasing then casts it.
+        // Recognize the rune while the stroke is still being drawn. Once a shape has matched for a
+        // moment, that spell is charged; releasing then casts it. The charge can still change while
+        // the same stroke continues (a horizontal line charges Ward, then turns into Lightning as Z).
         void CheckCharge()
         {
-            if (chargedSpell.HasValue || !drawing || Time.unscaledTime < nextChargeCheck) return;
+            if (!drawing || Time.unscaledTime < nextChargeCheck) return;
+            float elapsed = nextChargeCheck <= 0f ? 0f : ChargeCheckInterval;
             nextChargeCheck = Time.unscaledTime + ChargeCheckInterval;
 
-            chargeMatches = LooksLikeFire(RuneRecognizer.MatchRune(samples)) ? chargeMatches + 1 : 0;
-            if (chargeMatches < ChargeConfirmations) return;
+            var strict = RuneRecognizer.MatchRune(samples);
+            Spell? match = LooksLikeFire(strict) ? (Spell?)Spell.Fire : strict;
+            if (match.HasValue && !Chargeable(match.Value)) match = null;
+            if (match != pendingCharge)
+            {
+                pendingCharge = match;
+                chargeMatchedFor = 0f;
+                return;
+            }
+            if (!match.HasValue) return;
 
-            chargedSpell = Spell.Fire;
+            chargeMatchedFor += elapsed;
+            var settings = Pinch;
+            float needed = match == Spell.Barrier ? settings.wardConfirmTime : settings.chargeConfirmTime;
+            if (chargeMatchedFor < needed) return;
+            if (chargedThisStroke && chargedSpell == match) return;
+
+            chargedSpell = match;
+            chargedThisStroke = true;
             chargeHand = strokeHand;
             chargeAnchor = points[points.Count - 1];
             RefreshHandLabel();
-            sfx.PlayCharge(chargeAnchor, Pinch);
-            Notify(usingXr ? "Fire charged! Look at a target and release" : "Fire charged! Release to cast");
+            sfx.PlayCharge(match.Value, chargeAnchor, settings);
+            string name = ChargeName(match.Value);
+            Notify(match == Spell.Barrier
+                ? "Ward charged! Release to raise it"
+                : usingXr ? $"{name} charged! Look at a target and release" : $"{name} charged! Release to cast");
         }
 
         void Release(Vector3 point, Ray? aim)
@@ -479,7 +525,6 @@ namespace Runeveil
             strokeFadeUntil = Time.unscaledTime + 0.28f;
             var recognized = RuneRecognizer.MatchRune(samples);
             if (!recognized.HasValue && LooksLikeFire(null)) recognized = Spell.Fire;
-            chargeMatches = 0;
             var settings = Pinch;
             bool shortPinch = usingXr && Time.unscaledTime - strokeStarted <= settings.tapMaxDuration &&
                 maxDisplacementSquared <= settings.tapMaxMovement * settings.tapMaxMovement;
@@ -489,8 +534,11 @@ namespace Runeveil
                 return;
             }
             // A held charge is spent only when it is actually cast; otherwise it is kept.
-            // Drawing a different rune casts that rune and keeps the fire charge for later.
-            var spell = recognized.HasValue && recognized != chargedSpell ? recognized : chargedSpell ?? recognized;
+            // A charge made during this stroke is what gets cast. A charge held from an earlier stroke is
+            // kept if this stroke draws a different rune, and cast otherwise.
+            var spell = chargedThisStroke ? chargedSpell
+                : recognized.HasValue && recognized != chargedSpell ? recognized : chargedSpell ?? recognized;
+            chargedThisStroke = false;
             bool releasingCharge = chargedSpell.HasValue && spell == chargedSpell;
             if (duel.Finished && !releasingCharge) return;
             if (!spell.HasValue)
@@ -535,7 +583,9 @@ namespace Runeveil
 
         void ClearStroke()
         {
-            chargeMatches = 0;
+            chargeMatchedFor = 0f;
+            pendingCharge = null;
+            chargedThisStroke = false;
             nextChargeCheck = 0f;
             drawing = false;
             strokeHand = null;

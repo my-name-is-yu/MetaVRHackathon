@@ -28,9 +28,12 @@ MonoBehaviour:
   circleMaxRadiusVariation: 0.38
   circleMaxCorner: 75
   circleMinSize: 0.03
+  chargeConfirmTime: 0.05
+  wardConfirmTime: 0.3
   sfxVolume: 0.8
   touchVolume: 0.8
   drawVolume: 0.55
+  chargedDrawVolume: 0.7
   chargeVolume: 1
   castVolume: 1
   sparks: 1

@@ -63,12 +63,20 @@ namespace Runeveil
         [Tooltip("Smallest circle size (meters).")]
         [Range(0.01f, 0.15f)] public float circleMinSize = 0.03f;
 
+        [Header("Charging (Fire, Lightning, Ice, Wind, Ward)")]
+        [Tooltip("How long a shape must keep matching before it charges. Lower = charges sooner.")]
+        [Range(0f, 0.5f)] public float chargeConfirmTime = 0.05f;
+        [Tooltip("Ward (horizontal line) waits longer, because Z also starts with a horizontal line.")]
+        [Range(0f, 0.8f)] public float wardConfirmTime = 0.3f;
+
         [Header("Sound effects")]
         [Range(0f, 1f)] public float sfxVolume = 0.8f;
         [Tooltip("Fingertips touch (stroke starts).")]
         [Range(0f, 1f)] public float touchVolume = 0.8f;
         [Tooltip("Crackle while the fingertip moves. Louder when moving faster.")]
         [Range(0f, 1f)] public float drawVolume = 0.55f;
+        [Tooltip("Element sound while moving with a charge (replaces the crackle).")]
+        [Range(0f, 1f)] public float chargedDrawVolume = 0.7f;
         [Tooltip("Fire charge complete.")]
         [Range(0f, 1f)] public float chargeVolume = 1f;
         [Tooltip("Spell release.")]
