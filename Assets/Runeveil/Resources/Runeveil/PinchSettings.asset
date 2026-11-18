@@ -12,10 +12,10 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 4da5334f37e14c8ba3ff729cd121d4e1, type: 3}
   m_Name: PinchSettings
   m_EditorClassIdentifier: 
-  useStrength: 1
+  useStrength: 0
   startStrength: 0.6
   releaseStrength: 0.35
-  useDistance: 1
+  useDistance: 0
   startDistance: 0.025
   releaseDistance: 0.045
   acceptSystemPinch: 1
