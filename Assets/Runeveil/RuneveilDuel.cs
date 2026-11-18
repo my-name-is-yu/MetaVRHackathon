@@ -4,14 +4,17 @@ namespace Runeveil
 {
     internal enum DuelPhase { Practice, Battle, Won, Lost }
     internal enum AttackResult { None, Hit, Blocked }
-    internal enum CastResult { None, Hit, Miss, Shield, Interrupt }
+    internal enum CastResult { None, Hit, Miss, Shield, Interrupt, FocusHit }
 
     internal sealed class RuneveilDuel
     {
         public const int MaxBossHealth = 120;
+        public const float FocusSeconds = 0.35f;
         const float IdleSeconds = 2f;
         const float WindupSeconds = 2.4f;
+        const int FocusBonus = 8;
         float attackIn = IdleSeconds;
+        float focusedSeconds;
 
         public DuelPhase Phase { get; private set; } = DuelPhase.Practice;
         public int BossHealth { get; private set; } = MaxBossHealth;
@@ -21,6 +24,8 @@ namespace Runeveil
         public int Interruptions { get; private set; }
         public int Blocks { get; private set; }
         public bool Finished => Phase == DuelPhase.Won || Phase == DuelPhase.Lost;
+        public float FocusProgress => FocusReady ? 1f : focusedSeconds / FocusSeconds;
+        public bool FocusReady => focusedSeconds >= FocusSeconds - 0.000001f;
 
         public void StartBattle()
         {
@@ -52,7 +57,20 @@ namespace Runeveil
             return blocked ? AttackResult.Blocked : AttackResult.Hit;
         }
 
-        public CastResult Cast(Spell spell, ArenaTarget target)
+        public void TrackFocus(bool gazeOnCore, float deltaTime)
+        {
+            if (Finished || Windup < 0 || !gazeOnCore)
+            {
+                focusedSeconds = 0f;
+                return;
+            }
+
+            // When this frame crossed into windup, count only its time within the warning.
+            if (deltaTime > 0f)
+                focusedSeconds = Mathf.Min(FocusSeconds, focusedSeconds + Mathf.Min(deltaTime, -attackIn));
+        }
+
+        public CastResult Cast(Spell spell, ArenaTarget target, bool focusedAtRelease = false)
         {
             if (Finished) return CastResult.None;
             if (spell == Spell.Barrier)
@@ -62,7 +80,23 @@ namespace Runeveil
             }
             if (target == ArenaTarget.Miss) return CastResult.Miss;
 
-            var interrupted = spell == Spell.Lightning && target == ArenaTarget.Core && Windup >= 0;
+            int damage = spell switch
+            {
+                Spell.Fire => 16,
+                Spell.Lightning => 12,
+                Spell.Ice => 14,
+                Spell.Rock => 22,
+                Spell.Wind => 14,
+                _ => 0
+            };
+            if (damage == 0) return CastResult.None;
+
+            bool coreHit = target == ArenaTarget.Core;
+            bool activeWarning = Windup >= 0f;
+            // The pinch debounce can finish after the eyes have moved. Use readiness at release
+            // but require the warning to still be active when the cast is committed.
+            bool focused = focusedAtRelease && coreHit && activeWarning;
+            bool interrupted = spell == Spell.Lightning && coreHit && activeWarning;
             if (interrupted)
             {
                 Interruptions++;
@@ -71,16 +105,7 @@ namespace Runeveil
 
             if (Phase == DuelPhase.Battle)
             {
-                int damage = spell switch
-                {
-                    Spell.Fire => 16,
-                    Spell.Lightning => 12,
-                    Spell.Ice => 14,
-                    Spell.Rock => 22,
-                    Spell.Wind => 14,
-                    _ => 0
-                };
-                BossHealth = Mathf.Max(0, BossHealth - damage - (target == ArenaTarget.Core ? 4 : 0));
+                BossHealth = Mathf.Max(0, BossHealth - damage - (coreHit ? 4 : 0) - (focused ? FocusBonus : 0));
                 if (BossHealth == 0)
                 {
                     Phase = DuelPhase.Won;
@@ -89,13 +114,15 @@ namespace Runeveil
                 }
             }
 
-            return interrupted ? CastResult.Interrupt : CastResult.Hit;
+            if (interrupted) return CastResult.Interrupt;
+            return focused ? CastResult.FocusHit : CastResult.Hit;
         }
 
         void Recover()
         {
             attackIn = IdleSeconds;
             Windup = -1;
+            focusedSeconds = 0f;
         }
     }
 }

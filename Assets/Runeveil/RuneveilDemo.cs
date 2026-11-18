@@ -12,6 +12,8 @@ namespace Runeveil
         const float DrawingDepth = 0.57f;
         const float MinimumSampleDistanceSquared = 0.000004f;
         const int MaxSamples = 1024;
+        const double MaxEyeSampleAge = 0.2;
+        const float IndependentEyeAngle = 1.5f;
         static readonly Color DrawingColor = new Color32(255, 218, 139, 255);
 
         [SerializeField] Camera desktopView;
@@ -37,6 +39,13 @@ namespace Runeveil
         OVRSkeleton leftSkeleton;
         OVRSkeleton rightSkeleton;
         OVRPlugin.EyeGazeInteractionState eyeState;
+        EyeEvidence nativeEye;
+        EyeEvidence openXrEye;
+        string gazeHint;
+        bool freshEye;
+        int frameCount, handFrames, freshEyeFrames, independentEyeFrames, cancelledStrokes;
+        double reportAt;
+        System.Text.StringBuilder castReport;
 
         OVRHand strokeHand;
         bool leftReady;
@@ -51,7 +60,25 @@ namespace Runeveil
         Vector3 strokeUp;
         Vector3? handPosition;
         Vector3 pendingReleasePoint;
-        Ray? pendingReleaseAim;
+        AimSample pendingReleaseAim;
+        int focusLocks;
+
+        readonly struct AimSample
+        {
+            public readonly Ray? Ray;
+            public readonly ArenaTarget Target;
+            public readonly Vector3 Hit;
+            public readonly bool Focused;
+
+            public AimSample(Ray? ray, ArenaTarget target, Vector3 hit, bool focused)
+            {
+                Ray = ray;
+                Target = target;
+                Hit = hit;
+                Focused = focused;
+            }
+        }
+
         float strokeStarted;
         float maxDisplacementSquared;
         float strokeFadeUntil;
@@ -79,23 +106,39 @@ namespace Runeveil
             if (xrActive != usingXr) SelectCamera(xrActive);
 
             float deltaTime = Mathf.Min(Time.deltaTime, 0.1f);
-            if (!usingXr || OVRManager.hasInputFocus) AdvanceDuel(deltaTime);
+            bool preview = !usingXr && DesktopPreviewEnabled;
+            bool active = usingXr ? OVRManager.hasInputFocus : preview && Application.isFocused;
+            if (active) AdvanceDuel(deltaTime);
             Ray? mousePointer = null;
-            Ray? aim = usingXr ? ReadGaze() : MouseAim(out mousePointer);
+            Ray? ray = null;
+            if (usingXr) ray = ReadGaze();
+            else if (preview) ray = MouseAim(out mousePointer);
+            Vector3 hit = default;
+            var target = ray.HasValue ? arena.Aim(ray.Value, out hit) : ArenaTarget.Miss;
+            bool onCore = active && target == ArenaTarget.Core;
+            bool wasFocused = duel.FocusReady;
+            duel.TrackFocus(onCore && duel.Windup >= 0, deltaTime);
+            if (Debug.isDebugBuild && usingXr && !wasFocused && duel.FocusReady) focusLocks++;
+            var aim = new AimSample(ray, target, hit, onCore && duel.FocusReady);
 
             if (usingXr) UpdateHands(aim);
-            else UpdateMouse(aim);
-
-            Vector3 ignored;
-            var target = aim.HasValue ? arena.Aim(aim.Value, out ignored) : ArenaTarget.Miss;
+            else if (preview) UpdateMouse(aim);
+            else if (drawing || pendingDesktopAction || locked)
+            {
+                ClearStroke();
+                pendingDesktopAction = locked = false;
+            }
+            if (Debug.isDebugBuild) ReportInputs(ray.HasValue);
             arena.Tick(deltaTime, duel.Windup, duel.Shield, duel.Phase == DuelPhase.Won,
-                target == ArenaTarget.Core);
+                onCore, duel.FocusProgress, duel.FocusReady);
 
             string focus = target switch
             {
+                ArenaTarget.Core when duel.FocusReady => "Core exposed",
+                ArenaTarget.Core when duel.FocusProgress > 0 => "Focusing on core",
                 ArenaTarget.Core => locked ? "Core locked" : "Crystal core",
-                ArenaTarget.Body => locked ? "Golem locked" : "Golem",
-                _ => usingXr && !aim.HasValue ? "Eye gaze unavailable" : locked ? "Aim locked" : ""
+                ArenaTarget.Body => locked ? "Muse locked" : "Corrupted Muse",
+                _ => usingXr && !ray.HasValue ? "Eye gaze unavailable" : locked ? "Aim locked" : ""
             };
             string status = Time.unscaledTime < noticeUntil ? notice : DefaultStatus();
             string action = duel.Phase switch
@@ -106,7 +149,8 @@ namespace Runeveil
             };
             hud.Render(duel.BossHealth, duel.Hearts, duel.Shield, focus, spellLabel, status,
                 duel.Phase == DuelPhase.Practice, action, usingXr);
-            hud.SetActionFocus(usingXr ? aim : mousePointer);
+            hud.SetControlHint(!usingXr && !preview ? "Connect a headset to draw and aim" : null);
+            hud.SetActionFocus(usingXr ? ray : mousePointer);
             hud.SetHand(handPosition);
             hud.SetPinchMeter(usingXr && Pinch.showDebugMeter, leftPinch, rightPinch, Pinch);
             if (drawing) hud.ShowStroke(points, DrawingColor);
@@ -118,11 +162,21 @@ namespace Runeveil
             }
         }
 
+        bool DesktopPreviewEnabled
+        {
+            get
+            {
+#if UNITY_EDITOR
+                return desktopPreviewInEditor;
+#else
+                return false;
+#endif
+            }
+        }
+
         bool HasXrDisplay()
         {
-#if UNITY_EDITOR
-            if (desktopPreviewInEditor) return false;
-#endif
+            if (DesktopPreviewEnabled) return false;
             SubsystemManager.GetSubsystems(displays);
             foreach (var display in displays)
                 if (display.running) return true;
@@ -131,6 +185,8 @@ namespace Runeveil
 
         void SelectCamera(bool xr)
         {
+            duel.TrackFocus(false, 0);
+            ResetEyeEvidence();
             leftReady = rightReady = false;
             locked = false;
             pendingDesktopAction = false;
@@ -157,13 +213,17 @@ namespace Runeveil
             arena.Impact(blocked);
             if (blocked) Notify("Your ward blocked the strike");
             else if (duel.Phase == DuelPhase.Lost) ShowResult("Defeated");
-            else if (duel.Phase == DuelPhase.Battle) Notify("The golem's fist hit you");
+            else if (duel.Phase == DuelPhase.Battle) Notify("The Muse's strike hit you");
         }
 
         string DefaultStatus()
         {
+            if (!usingXr && !DesktopPreviewEnabled) return "";
             if (duel.Finished) return resultSummary;
-            if (duel.Windup >= 0) return "Fist rising! Strike the core with Lightning or draw a Ward";
+            if (usingXr && !string.IsNullOrEmpty(gazeHint)) return gazeHint;
+            if (usingXr && !handPosition.HasValue) return "Bring a hand into view, then pinch";
+            if (duel.FocusReady) return "Core exposed! Release an attack rune at the crystal";
+            if (duel.Windup >= 0) return "Hold your gaze on the crystal, interrupt with Lightning, or draw a Ward";
             if (duel.Phase == DuelPhase.Battle) return "Aim for the crystal core";
             return "";
         }
@@ -192,30 +252,120 @@ namespace Runeveil
 
         Ray? ReadGaze()
         {
-            if (!OVRManager.hasInputFocus) return null;
+            freshEye = false;
+            if (!OVRManager.hasInputFocus)
+            {
+                ResetEyeEvidence();
+                gazeHint = "Return to the game to continue";
+                return null;
+            }
 
-            Transform trackingSpace = xrRig.trackingSpace;
-            if (OVRPlugin.eyeGazeInteractionsSupported && OVRPlugin.eyeGazeInteractionsEnabled &&
-                OVRPlugin.GetEyeGazeInteractionState(OVRPlugin.Step.Render, -1, ref eyeState) && eyeState.IsValid)
-                return new Ray(trackingSpace.TransformPoint(eyeState.Pose.Position.FromFlippedZVector3f()),
-                    trackingSpace.TransformDirection(eyeState.Pose.Orientation.FromFlippedZQuatf() * Vector3.forward));
+            double now = Time.realtimeSinceStartupAsDouble;
+            Transform space = xrRig.trackingSpace;
+            bool supported = OVRPlugin.eyeGazeInteractionsSupported;
+            bool enabled = supported && OVRPlugin.eyeGazeInteractionsEnabled;
+            bool nativeValid = enabled &&
+                OVRPlugin.GetEyeGazeInteractionState(OVRPlugin.Step.Render, -1, ref eyeState) && eyeState.IsValid;
+            if (nativeValid)
+            {
+                var ray = new Ray(space.TransformPoint(eyeState.Pose.Position.FromFlippedZVector3f()),
+                    space.TransformDirection(eyeState.Pose.Orientation.FromFlippedZQuatf() * Vector3.forward));
+                if (Verified(ray, ref nativeEye, eyeState.Time, now))
+                {
+                    gazeHint = null;
+                    return ray;
+                }
+            }
+            else nativeEye = default;
 
-            // The simulator can expose its independent gaze through the OpenXR interaction profile.
+            // Some simulator runtimes publish gaze only through the OpenXR interaction profile.
             var eyes = InputSystem.GetDevice<EyeGazeInteraction.EyeGazeDevice>();
-            if (eyes == null) return null;
-            var pose = eyes.pose.ReadValue();
+            var pose = eyes != null ? eyes.pose.ReadValue() : default;
             const InputTrackingState required = InputTrackingState.Position | InputTrackingState.Rotation;
-            if (!pose.isTracked || (pose.trackingState & required) != required) return null;
-            return new Ray(trackingSpace.TransformPoint(pose.position),
-                trackingSpace.TransformDirection(pose.rotation * Vector3.forward));
+            bool openXrValid = eyes != null && pose.isTracked && (pose.trackingState & required) == required;
+            double age = eyes == null ? double.PositiveInfinity
+                : UnityEngine.InputSystem.LowLevel.InputState.currentTime - eyes.lastUpdateTime;
+            if (openXrValid && age >= -MaxEyeSampleAge && age <= MaxEyeSampleAge)
+            {
+                var ray = new Ray(space.TransformPoint(pose.position), space.TransformDirection(pose.rotation * Vector3.forward));
+                if (Verified(ray, ref openXrEye, eyes.lastUpdateTime, now))
+                {
+                    gazeHint = null;
+                    return ray;
+                }
+            }
+            else openXrEye = default;
+
+            gazeHint = freshEye ? "Keep your head still and look left and right with your eyes"
+                : nativeValid || openXrValid ? "Waiting for a fresh eye sample"
+                : supported && !enabled ? "Enable eye tracking and allow eye access for this game"
+                : !supported && eyes == null ? "Eye gaze is unavailable on this XR runtime"
+                : "Adjust your headset until your eyes are tracked";
+            return null;
         }
 
-        void UpdateHands(Ray? aim)
+        bool Verified(Ray ray, ref EyeEvidence evidence, double stamp, double now)
+        {
+            return evidence.Accept(view.transform.InverseTransformDirection(ray.direction),
+                view.transform.rotation, stamp, now, ref freshEye);
+        }
+
+        // Deltas stay within each provider's clock. A stationary or replayed sample never
+        // proves independent movement, even when the player turns their head.
+        struct EyeEvidence
+        {
+            double lastStamp, lastAdvance;
+            Quaternion referenceHead;
+            Vector3 referenceDirection;
+            bool independent;
+
+            public bool Accept(Vector3 direction, Quaternion head, double stamp, double now, ref bool fresh)
+            {
+                if (!(stamp > 0) || double.IsInfinity(stamp) || !(direction.sqrMagnitude > 0.9f))
+                    return false;
+                if (stamp == lastStamp)
+                {
+                    if (now - lastAdvance > MaxEyeSampleAge) return false;
+                    fresh = true;
+                    return independent;
+                }
+
+                if (lastStamp == 0 || stamp < lastStamp || now - lastAdvance > MaxEyeSampleAge)
+                {
+                    independent = false;
+                    referenceHead = head;
+                    referenceDirection = direction;
+                }
+                if (!independent)
+                {
+                    if (Quaternion.Angle(referenceHead, head) > 1f)
+                    {
+                        referenceHead = head;
+                        referenceDirection = direction;
+                    }
+                    else independent = Vector3.Angle(referenceDirection, direction) >= IndependentEyeAngle;
+                }
+                lastStamp = stamp;
+                lastAdvance = now;
+                fresh = true;
+                return independent;
+            }
+        }
+
+        void ResetEyeEvidence()
+        {
+            nativeEye = default;
+            openXrEye = default;
+            freshEye = false;
+            gazeHint = null;
+        }
+
+        void UpdateHands(AimSample aim)
         {
             handPosition = null;
             if (!OVRManager.hasInputFocus)
             {
-                if (drawing) ClearStroke();
+                if (drawing) CancelTrackingStroke();
                 leftReady = rightReady = false;
                 leftPinch.Reset();
                 rightPinch.Reset();
@@ -227,7 +377,7 @@ namespace Runeveil
             ReadHand(rightHand, rightSkeleton, rightPinch, ref rightReady, aim, deltaTime);
         }
 
-        void ReadHand(OVRHand hand, OVRSkeleton skeleton, RuneveilPinchDetector pinch, ref bool ready, Ray? aim,
+        void ReadHand(OVRHand hand, OVRSkeleton skeleton, RuneveilPinchDetector pinch, ref bool ready, AimSample aim,
             float deltaTime)
         {
             var settings = Pinch;
@@ -236,7 +386,7 @@ namespace Runeveil
                 pinch.LostTime += deltaTime;
                 // Keep the stroke alive through a brief tracking dropout.
                 if (strokeHand == hand && pinch.LostTime <= settings.trackingLossGrace) return;
-                if (strokeHand == hand) ClearStroke();
+                if (strokeHand == hand) CancelTrackingStroke();
                 pinch.Reset();
                 ready = false;
                 return;
@@ -320,7 +470,7 @@ namespace Runeveil
             return pointer;
         }
 
-        void UpdateMouse(Ray? aim)
+        void UpdateMouse(AimSample aim)
         {
             handPosition = null;
             var mouse = Mouse.current;
@@ -388,7 +538,7 @@ namespace Runeveil
             points.Add(point);
         }
 
-        void Release(Vector3 point, Ray? aim)
+        void Release(Vector3 point, AimSample aim)
         {
             Sample(point);
             if (!drawing) return;
@@ -400,7 +550,7 @@ namespace Runeveil
             var settings = Pinch;
             bool shortPinch = usingXr && Time.unscaledTime - strokeStarted <= settings.tapMaxDuration &&
                 maxDisplacementSquared <= settings.tapMaxMovement * settings.tapMaxMovement;
-            if (!spell.HasValue && shortPinch && aim.HasValue && hud.ActionHit(aim.Value))
+            if (!spell.HasValue && shortPinch && aim.Ray.HasValue && hud.ActionHit(aim.Ray.Value))
             {
                 StartBattle();
                 return;
@@ -408,28 +558,100 @@ namespace Runeveil
             if (duel.Finished) return;
             if (!spell.HasValue)
             {
+                RecordCast(null, ArenaTarget.Miss, "invalid");
                 Notify("Rune unclear. Try the shape again");
                 return;
             }
-            if (spell != Spell.Barrier && !aim.HasValue)
+            if (spell != Spell.Barrier && !aim.Ray.HasValue)
             {
-                Notify(usingXr ? "Eye gaze unavailable. Look at a target and try again" : "Release inside the Game view");
+                RecordCast(spell, ArenaTarget.Miss, "cancel");
+                Notify(usingXr ? gazeHint ?? "Eye gaze unavailable. Look at a target and try again" : "Release inside the Game view");
                 return;
             }
 
-            Vector3 hit = point;
-            var target = spell == Spell.Barrier ? ArenaTarget.Miss : arena.Aim(aim.Value, out hit);
-            var cast = duel.Cast(spell.Value, target);
+            var target = spell == Spell.Barrier ? ArenaTarget.Miss : aim.Target;
+            Vector3 hit = spell == Spell.Barrier ? point : aim.Hit;
+            var cast = duel.Cast(spell.Value, target, aim.Focused);
+            RecordCast(spell, target, cast.ToString());
             arena.Cast(spell.Value, point, hit, target, view.transform.position, view.transform.forward);
             spellLabel = spell == Spell.Barrier ? "Ward" : spell.Value.ToString();
             if (duel.Phase == DuelPhase.Won) ShowResult("Victory");
             else Notify(cast switch
             {
                 CastResult.Interrupt => "Lightning interrupted the strike",
+                CastResult.FocusHit => "Focused strike! The exposed crystal took extra damage",
                 CastResult.Shield => "Ward ready for the next strike",
                 CastResult.Miss => "The spell missed",
-                _ => target == ArenaTarget.Core ? "Crystal core hit" : "Golem hit"
+                _ => target == ArenaTarget.Core ? "Crystal core hit" : "Muse hit"
             });
+        }
+
+        void CancelTrackingStroke()
+        {
+            if (!drawing) return;
+            cancelledStrokes++;
+            ClearStroke();
+        }
+
+        void OnApplicationPause(bool paused)
+        {
+            if (paused) ResetTracking();
+        }
+
+        void OnDisable()
+        {
+            ResetTracking();
+            FlushDiagnostics();
+        }
+
+        void ResetTracking()
+        {
+            CancelTrackingStroke();
+            leftReady = rightReady = false;
+            leftPinch.Reset();
+            rightPinch.Reset();
+            pendingReleaseAim = default;
+            duel.TrackFocus(false, 0);
+            handPosition = null;
+            ResetEyeEvidence();
+        }
+
+        void RecordCast(Spell? spell, ArenaTarget target, string result)
+        {
+            if (!Debug.isDebugBuild) return;
+            castReport ??= new System.Text.StringBuilder();
+            if (castReport.Length != 0) castReport.AppendLine();
+            castReport.Append("[RuneveilCast] spell=").Append(spell?.ToString() ?? "None")
+                .Append(" part=").Append(target).Append(" result=").Append(result);
+        }
+
+        void ReportInputs(bool aimed)
+        {
+            if (usingXr)
+            {
+                frameCount++;
+                if (handPosition.HasValue) handFrames++;
+                if (freshEye) freshEyeFrames++;
+                if (aimed) independentEyeFrames++;
+            }
+            double now = Time.realtimeSinceStartupAsDouble;
+            if (reportAt == 0) reportAt = now + 5d;
+            if (now < reportAt) return;
+            FlushDiagnostics();
+            reportAt = now + 5d;
+        }
+
+        void FlushDiagnostics()
+        {
+            if (frameCount > 0)
+                Debug.Log($"[RuneveilInput] frames={frameCount} hand={handFrames} validEye={freshEyeFrames} " +
+                    $"independentEye={independentEyeFrames} focusLocks={focusLocks} cancelled={cancelledStrokes}");
+            if (castReport != null && castReport.Length > 0)
+            {
+                Debug.Log(castReport.ToString());
+                castReport.Clear();
+            }
+            frameCount = handFrames = freshEyeFrames = independentEyeFrames = focusLocks = cancelledStrokes = 0;
         }
 
         void ClearStroke()

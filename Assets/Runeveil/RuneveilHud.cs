@@ -381,7 +381,7 @@ namespace Runeveil
         private void CreateBossPanel()
         {
             boss = Panel("Boss health", canvasRect, 468, 91);
-            Label("Boss name", boss, "MOSSCROWN GOLEM", 24, Paper, 290, 36, -65, 16, TextAnchor.MiddleLeft);
+            Label("Boss name", boss, "Corrupted Muse", 24, Paper, 290, 36, -65, 16, TextAnchor.MiddleLeft);
             bossHpText = Label("Health", boss, "", 21, Gold, 124, 36, 146, 16, TextAnchor.MiddleRight);
             ImageBox("Health track", boss, 420, 16, 0, -19, Edge);
             ImageBox("Health track interior", boss, BossBarWidth, 12, 0, -19, Tile);
@@ -403,8 +403,8 @@ namespace Runeveil
             CreateGlyph(Spell.Rock, "Stone shot", new Color32(228, 185, 154, 255), -132, -78);
             CreateGlyph(Spell.Wind, "Wind blade", new Color32(207, 182, 255, 255), 0, -78);
             CreateGlyph(Spell.Barrier, "Ward", Mint, 132, -78);
-            Label("Combat tip", guide, "Fist raised? Hit the chest with lightning\nor draw a ward to block the strike.",
-                19, Muted, 392, 59, 0, -153, TextAnchor.MiddleLeft);
+            Label("Combat tip", guide, "Fist raised? Hold gaze on the pink core.\nA closed ring means extra damage.\nLightning interrupts. Ward blocks one hit.",
+                18, Muted, 392, 65, 0, -153, TextAnchor.MiddleLeft);
         }
 
         private void CreateGlyph(Spell spell, string name, Color color, float x, float y)

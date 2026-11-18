@@ -7,11 +7,10 @@ namespace Runeveil
 {
     public enum ArenaTarget { Miss, Body, Core }
 
-    public sealed class RuneveilArena : MonoBehaviour
+    public sealed partial class RuneveilArena : MonoBehaviour
     {
         private const float BossDepth = 5.76f;
         private const float CastRange = 9f;
-        private const float CoreRadius = 0.315f;
         private static readonly int BaseColor = Shader.PropertyToID("_BaseColor");
 
         private readonly List<UnityEngine.Object> generatedAssets = new();
@@ -23,7 +22,6 @@ namespace Runeveil
         private Arm attackArm;
         private Arm anchorArm;
         private Transform warningArcs;
-        private Transform brackets;
         private MeshRenderer coreRenderer;
         private MeshRenderer coreLight;
         private Material stone;
@@ -51,6 +49,12 @@ namespace Runeveil
         private float defeat;
         private float wardFlashTime;
         private float wardOpacity;
+        private Transform focusIndicator;
+        private MeshRenderer focusCorners;
+        private MeshRenderer focusBurst;
+        private LineRenderer focusArc;
+        private Vector3[] focusArcPoints;
+        private int focusArcSegments = -1;
 
         public Transform Core { get; private set; }
 
@@ -80,8 +84,9 @@ namespace Runeveil
             BuildBackdrop(shader);
             BuildCourtyard();
             BuildValleyRidges(shader);
-            BuildGuardian();
+            BuildMuse(shader);
             BuildEffects();
+            BuildFocusIndicator();
             ResetArena();
         }
 
@@ -94,15 +99,13 @@ namespace Runeveil
                 bodyDistance = Mathf.Min(bodyDistance, hit);
             }
 
-            float coreDistance = Core != null
-                ? HitVolume.IntersectSphere(ray.origin - Core.position, ray.direction, CoreRadius)
-                : float.PositiveInfinity;
-            if (!float.IsInfinity(coreDistance) && coreDistance <= bodyDistance + 0.12f)
+            float coreDistance = Core != null ? coreVolume.Intersect(ray) : float.PositiveInfinity;
+            if (coreDistance <= CastRange && coreDistance <= bodyDistance + 0.08f)
             {
                 point = ray.GetPoint(coreDistance);
                 return ArenaTarget.Core;
             }
-            if (!float.IsInfinity(bodyDistance))
+            if (bodyDistance <= CastRange)
             {
                 point = ray.GetPoint(bodyDistance);
                 return ArenaTarget.Body;
@@ -113,7 +116,8 @@ namespace Runeveil
             return ArenaTarget.Miss;
         }
 
-        public void Tick(float dt, float windup, bool shield, bool won, bool coreAimed)
+        public void Tick(float dt, float windup, bool shield, bool won, bool coreAimed,
+            float focusProgress = 0f, bool focusReady = false)
         {
             dt = Mathf.Clamp(dt, 0f, 0.05f);
             age += dt;
@@ -125,28 +129,11 @@ namespace Runeveil
             lift = Damp(lift, rising ? Mathf.SmoothStep(0f, 1f, charge / 0.72f) : 0f, rising ? 7.8f : 6f, dt);
             float thrust = slam > 0f ? Mathf.Sin(Mathf.PI * Mathf.Min(0.98f, (1f - slam / 0.52f) * 1.46f)) * (1f - defeat) : 0f;
             boss.localPosition = new Vector3(0f, Mathf.Sin(age * 1.2f) * 0.019f - defeat * 0.59f - thrust * 0.10f, BossDepth);
-            boss.localRotation = Quaternion.Euler(0f, 1.45f * Mathf.Sin(age * 0.67f) + 9.7f * thrust,
-                Mathf.Sin(age * 0.91f) * 0.86f + flinch * Mathf.Sin(age * 26f) * 1.9f - defeat * 7.5f);
-
-            attackArm.Pose(new Vector3(-1.43f - lift * 0.35f + thrust * 0.25f,
-                    1.8f + lift * 0.48f - thrust * 0.51f - defeat * 0.15f, -0.05f - lift * 0.21f - thrust * 0.56f),
-                new Vector3(-1.78f - lift * 0.13f + thrust * 0.48f,
-                    2.27f + lift * 0.69f - thrust * 1.64f - defeat * 1.12f, -0.63f - thrust * 0.72f),
-                new Vector3(-8f + 16f * lift - 34f * thrust, 12.6f, -14f + 22f * lift + 11f * thrust));
-            anchorArm.Pose(new Vector3(1.42f, 1.38f + lift * 0.03f + defeat * 0.08f, -0.15f - lift * 0.15f),
-                new Vector3(1.64f, 0.60f + lift * 0.06f + defeat * 0.59f, -0.89f - lift * 0.07f),
-                new Vector3(-5.7f + 9.7f * lift, -7f - 16.5f * defeat, -11f));
-
-            warningArcs.gameObject.SetActive(rising && defeat < 0.13f);
-            warningArcs.localPosition = attackArm.Fist.localPosition + Vector3.back * 0.38f;
-            warningArcs.localRotation = Quaternion.Euler(0f, -13f, -15f * lift);
-            brackets.gameObject.SetActive((rising || coreAimed) && defeat < 0.2f);
-            float pulse = 0.5f + 0.5f * Mathf.Sin(age * 3.8f);
-            Color coreColor = Color.Lerp(Rgb(0xffa32e), Rgb(0xffec89), rising ? 0.45f + charge * 0.55f : pulse * 0.1f);
-            Tint(coreRenderer, coreColor * Mathf.Lerp(1f, 0.32f, defeat), 1f);
-            Tint(coreLight, Rgb(0xffa73b), (0.32f + pulse * 0.10f + (rising ? 0.39f : 0f) + (coreAimed ? 0.08f : 0f)) * (1f - defeat));
-            coreLight.transform.localScale = Vector3.one * (0.95f + pulse * 0.08f + (rising ? 0.27f : 0f));
+            boss.localRotation = Quaternion.Euler(0f, 1.45f * Mathf.Sin(age * 0.67f) - 9.7f * thrust,
+                2.8f + Mathf.Sin(age * 0.91f) * 0.86f + flinch * Mathf.Sin(age * 26f) * 1.9f - defeat * 7.5f);
+            PoseMuse(rising, coreAimed, charge, thrust);
             TickEffects(dt, shield);
+            TickFocusIndicator(rising, focusProgress, focusReady);
         }
 
         public void Cast(Spell spell, Vector3 from, Vector3 to, ArenaTarget target, Vector3 head, Vector3 forward)
@@ -238,6 +225,76 @@ namespace Runeveil
                 shot.Root.gameObject.SetActive(false);
             }
             Tick(0f, -1f, false, false, false);
+        }
+
+        private void BuildFocusIndicator()
+        {
+            focusIndicator = Group(stage, "Pink core gaze indicator");
+            var corners = new Geometry("Core focus corners");
+            var burst = new Geometry("Open core diamonds");
+
+            void Bar(float x, float y, float halfWidth, float halfHeight)
+            {
+                corners.Quad(new Vector3(x - halfWidth, y - halfHeight, 0f), new Vector3(x - halfWidth, y + halfHeight, 0f),
+                    new Vector3(x + halfWidth, y + halfHeight, 0f), new Vector3(x + halfWidth, y - halfHeight, 0f), 0xffffff);
+            }
+
+            for (int x = -1; x <= 1; x += 2)
+            for (int y = -1; y <= 1; y += 2)
+            {
+                Bar(0.353f * x, 0.41f * y, 0.059f, 0.011f);
+                Bar(0.408f * x, 0.356f * y, 0.011f, 0.058f);
+            }
+
+            for (int sign = -1; sign <= 1; sign += 2)
+            {
+                AddFocusDiamond(burst, new Vector3(sign * 0.511f, 0f, 0f));
+                AddFocusDiamond(burst, new Vector3(0f, sign * 0.511f, 0f));
+            }
+
+            focusCorners = Render(focusIndicator, corners, glow);
+            Tint(focusCorners, Rgb(0xffb0df), 0.84f);
+            focusBurst = Render(focusIndicator, burst, glow);
+            Tint(focusBurst, Rgb(0xffc1eb), 0.91f);
+            focusArcPoints = Arc(Vector3.zero, 0.394f, 0.394f, 90f, -270f, 48);
+            focusArc = Line(focusIndicator, "Gaze charge arc", focusArcPoints.Length, 0.016f);
+            focusArc.useWorldSpace = false;
+            focusArc.numCapVertices = 3;
+        }
+
+        private static void AddFocusDiamond(Geometry geometry, Vector3 at)
+        {
+            geometry.Quad(at + Vector3.down * 0.046f, at + Vector3.left * 0.038f,
+                at + Vector3.up * 0.046f, at + Vector3.right * 0.038f, 0xffffff);
+        }
+
+        private void TickFocusIndicator(bool warning, float progress, bool ready)
+        {
+            bool visible = warning && Core != null;
+            focusIndicator.gameObject.SetActive(visible);
+            if (!visible) return;
+
+            focusIndicator.SetPositionAndRotation(Core.position - boss.forward * 0.36f, boss.rotation);
+            // The arc closes and grows outward at full focus. The diamonds distinguish
+            // an exposed core from a charged arc even when its colors are hard to see.
+            focusIndicator.localScale = Vector3.one * (ready ? 1.18f : 1f);
+            focusCorners.enabled = !ready;
+            focusBurst.enabled = ready;
+            int lastSegment = ready ? focusArcPoints.Length - 1 :
+                Mathf.FloorToInt(Mathf.Clamp01(progress) * (focusArcPoints.Length - 1));
+            focusArc.enabled = lastSegment > 0;
+            if (lastSegment <= 0) return;
+
+            if (lastSegment != focusArcSegments)
+            {
+                focusArcSegments = lastSegment;
+                focusArc.positionCount = lastSegment + 1;
+                for (int i = 0; i <= lastSegment; i++) focusArc.SetPosition(i, focusArcPoints[i]);
+            }
+
+            focusArc.startWidth = ready ? 0.026f : 0.016f;
+            focusArc.endWidth = focusArc.startWidth;
+            Tint(focusArc, Rgb(ready ? 0xffd4f1 : 0xff8ad6), ready ? 0.98f : 0.78f);
         }
 
         private void OnDestroy()
@@ -479,166 +536,6 @@ namespace Runeveil
             Render(stage, floorLights, softGlow);
         }
 
-        private void BuildGuardian()
-        {
-            var contacts = new Geometry("Guardian contact shadows");
-            contacts.Disc(new(0f, 0.02f, 5.45f), Vector3.right, Vector3.forward, 5.25f, 3.55f, 0x311d31, 167);
-            contacts.Disc(new(-0.85f, 0.024f, 5.08f), Vector3.right, Vector3.forward, 1.65f, 1.26f, 0x291628, 194);
-            contacts.Disc(new(0.85f, 0.024f, 5.07f), Vector3.right, Vector3.forward, 1.65f, 1.26f, 0x291628, 194);
-            contacts.Disc(new(1.67f, 0.025f, 4.90f), Vector3.right, Vector3.forward, 1.67f, 1.43f, 0x291628, 132);
-            Render(stage, contacts, shadow);
-            boss = Group(stage, "Amberheart, the ruin guardian");
-            var body = new Geometry("Weathered granite and copper");
-            var eyes = new Geometry("Amber eyes");
-            var face = new Geometry("Eye gaze and chest engravings");
-            var random = new System.Random(26628);
-            const int purple = 0x805575;
-            const int lightStone = 0x9e6c8b;
-            const int darkStone = 0x624460;
-            const int trim = 0xa57275;
-            const int copper = 0x83524f;
-
-            GuardianRock(body, boss, new(0f, 1.56f, 0.10f), new(1.02f, 1.09f, 0.80f), purple, new(0f, -5f, -7f));
-            GuardianRock(body, boss, new(0f, 0.96f, 0.13f), new(0.79f, 0.52f, 0.68f), darkStone, new(0f, -5f, 8f));
-            GuardianRock(body, boss, new(0f, 2.62f, 0.084f), new(0.73f, 0.67f, 0.65f), purple, new(0f, 12f, 10f));
-            body.Sphere(new(0f, 2.60f, -0.486f), new(0.584f, 0.45f, 0.17f),
-                Quaternion.identity, 0x654362, 14, 8);
-            body.Sphere(new(0f, 2.59f, -0.53f), new(0.494f, 0.372f, 0.15f),
-                Quaternion.identity, 0x4c354c, 14, 8);
-            GuardianMoss(body, new(0f, 3.14f, -0.36f), 1.17f, 14, random);
-
-            for (int sign = -1; sign <= 1; sign += 2)
-            {
-                GuardianRock(body, boss, new(sign * 0.78f, 0.51f, -0.09f), new(0.48f, 0.56f, 0.55f),
-                    purple, new(0f, -7f, -sign * 18f));
-                GuardianRock(body, boss, new(sign * 0.81f, 0.20f, -0.41f), new(0.54f, 0.30f, 0.62f),
-                    lightStone, new(0f, 11f * sign, 3f * sign));
-                GuardianRock(body, boss, new(sign * 0.74f, 0.115f, -0.74f), new(0.39f, 0.176f, 0.28f),
-                    trim, new(6f, -5f * sign, 0f), true);
-                GuardianMoss(body, new(sign * 0.84f, 0.45f, -0.49f), 0.60f, 7, random);
-                GuardianMoss(body, new(sign * 0.60f, 2.84f, -0.37f), 0.39f, 6, random);
-
-                Quaternion eyeTilt = Quaternion.Euler(0f, sign * -7f, sign * 20f);
-                eyes.Sphere(new(sign * 0.224f, 2.61f, -0.653f), new(0.181f, 0.135f, 0.066f),
-                    eyeTilt, 0xffbf7e, 13, 7);
-                face.Sphere(new(sign * 0.167f, 2.59f, -0.724f), new(0.058f, 0.075f, 0.024f),
-                    eyeTilt, 0x34253c, 9, 6);
-                eyes.Sphere(new(sign * 0.164f - 0.018f, 2.627f, -0.745f), new(0.015f, 0.018f, 0.009f),
-                    eyeTilt, 0xffecc8, 7, 5);
-                body.Tube(new Vector3[] {
-                    new(sign * 0.43f, 2.98f, -0.01f), new(sign * 0.65f, 3.12f, -0.045f),
-                    new(sign * 0.76f, 3.31f, -0.062f), new(sign * 0.73f, 3.50f, -0.092f),
-                    new(sign * 0.60f, 3.64f, -0.13f), new(sign * 0.43f, 3.70f, -0.17f)
-                }, 0.245f, 0xb07a89, 9, 0.04f);
-
-                var etching = new Vector3[20];
-                for (int i = 0; i < etching.Length; i++)
-                {
-                    float t = i / (etching.Length - 1f);
-                    float angle = -0.42f + t * Mathf.PI * 2.2f;
-                    float radius = 0.20f * (1f - t) + 0.033f;
-                    etching[i] = new Vector3(sign * (0.52f + Mathf.Cos(angle) * radius),
-                        1.91f + Mathf.Sin(angle) * radius, -0.748f);
-                }
-                face.Tube(etching, 0.032f, 0x694050, 7);
-                face.Tube(new Vector3[] { new(sign * 0.88f, 1.66f, -0.56f), new(sign * 0.85f, 1.56f, -0.62f),
-                    new(sign * 0.92f, 1.47f, -0.565f) }, 0.012f, 0x553751);
-            }
-
-            Vector3 chest = new(0f, 1.97f, -0.635f);
-            body.Profile(chest + Vector3.forward * 0.032f, new(0.79f, 0.127f, 0.74f),
-                Quaternion.Euler(-90f, 0f, 0f), copper, Geometry.ShieldPlate, Geometry.ChestOutline.Length, Geometry.ChestOutline);
-            body.Profile(chest, new(0.73f, 0.106f, 0.68f), Quaternion.Euler(-90f, 0f, 0f),
-                0xbd886f, Geometry.ShieldPlate, Geometry.ChestOutline.Length, Geometry.ChestOutline);
-            body.Tube(Arc(chest + Vector3.back * 0.146f, 0.322f, 0.385f, 0f, 360f, 32),
-                0.026f, 0x865345, 7);
-
-            Core = Group(boss, "Amberheart core");
-            Core.localPosition = new Vector3(0f, 1.99f, -0.795f);
-            var gem = new Geometry("Amber crystal");
-            gem.Profile(Vector3.zero, new(0.265f, 0.391f, 0.25f), Quaternion.Euler(-5f, 18f, 4f),
-                0xfff0d1, Geometry.GemProfile, 5);
-            coreRenderer = Render(Core, gem, vivid);
-            coreLight = Render(Core, "Core halo", softDisc, softGlow);
-            coreLight.transform.localPosition = Vector3.back * 0.21f;
-            var targeting = new Geometry("Gold targeting corners");
-            for (int x = -1; x <= 1; x += 2)
-            {
-                for (int y = -1; y <= 1; y += 2)
-                {
-                    targeting.Tube(new Vector3[] { new(0.29f * x, 0.415f * y, 0f), new(0.37f * x, 0.415f * y, -0.006f),
-                        new(0.40f * x, 0.38f * y, -0.006f), new(0.40f * x, 0.315f * y, 0f) }, 0.016f, 0xffe1a9);
-                }
-            }
-            brackets = Render(Core, targeting, vivid).transform;
-            brackets.localPosition = Vector3.back * 0.29f;
-
-            attackArm = BuildArm(body, -1, random);
-            anchorArm = BuildArm(body, 1, random);
-            Render(boss, body, stone);
-            Render(boss, eyes, vivid);
-            Render(boss, face, stone);
-            var warning = new Geometry("Amber punch telegraph");
-            warning.Tube(Arc(Vector3.zero, 0.75f, 0.84f, 103f, 244f, 25), 0.016f, 0xffb55e);
-            warning.Tube(Arc(Vector3.back * 0.022f, 0.87f, 0.98f, 116f, 244f, 25), 0.009f, 0xffd6a0);
-            warningArcs = Render(boss, warning, glow).transform;
-        }
-
-        private Arm BuildArm(Geometry body, int side, System.Random random)
-        {
-            var shoulder = new Vector3(side * 1.02f, 2.20f, 0.113f);
-            GuardianRock(body, boss, shoulder, new(0.65f, 0.605f, 0.61f), 0x9e6c8b, new(0f, 8f * side, 10f * side));
-            GuardianMoss(body, shoulder + new Vector3(side * 0.11f, 0.49f, -0.32f), 0.79f, 10, random);
-            var arm = new Arm(shoulder, Group(boss, side < 0 ? "Raised upper arm" : "Anchored upper arm"),
-                Group(boss, side < 0 ? "Raised forearm" : "Anchored forearm"),
-                Group(boss, side < 0 ? "Raised fist" : "Anchored fist"));
-            var upper = new Geometry("Hewn upper arm");
-            GuardianRock(upper, arm.Upper, Vector3.zero, new(0.48f, 0.61f, 0.51f), 0x845777, new(-6f, side * 6f, -2f));
-            Render(arm.Upper, upper, stone);
-            var lower = new Geometry("Hewn forearm");
-            GuardianRock(lower, arm.Lower, Vector3.zero, new(0.52f, 0.67f, 0.57f), 0x9d6b89, new(0f, side * 7f, side * 11f));
-            Render(arm.Lower, lower, stone);
-            var fist = new Geometry("Moss-covered fist");
-            GuardianRock(fist, arm.Fist, Vector3.zero, new(0.55f, 0.55f, 0.52f), 0x6b4867, new(0f, side * 11f, 0f));
-            for (int knuckle = -1; knuckle <= 1; knuckle++)
-            {
-                GuardianRock(fist, arm.Fist, new(knuckle * 0.32f, knuckle == 0 ? 0.090f : 0.036f, -0.32f),
-                    new(0.164f, 0.289f - Mathf.Abs(knuckle) * 0.04f, 0.245f),
-                    0xa07087, new(-10f, knuckle * 6f, knuckle * 5f), true);
-            }
-            GuardianRock(fist, arm.Fist, new(-side * 0.444f, -0.12f, -0.29f), new(0.131f, 0.235f, 0.196f),
-                0x976784, new(-11f, -side * 14f, -side * 20f), true);
-            GuardianMoss(fist, new(side * 0.062f, 0.46f, -0.17f), 0.77f, 11, random);
-            fist.Tube(new Vector3[] { new(side * 0.27f, 0.33f, -0.47f), new(side * 0.20f, 0.26f, -0.53f),
-                new(side * 0.31f, 0.19f, -0.55f) }, 0.010f, 0x503652);
-            Render(arm.Fist, fist, stone);
-            return arm;
-        }
-
-        private void GuardianRock(Geometry geometry, Transform parent, Vector3 center, Vector3 radius, int color,
-            Vector3 euler, bool block = false)
-        {
-            Quaternion rotation = Quaternion.Euler(euler);
-            if (block) geometry.Block(center, radius, rotation, color);
-            else geometry.Sphere(center, radius, rotation, color, 13, 9, true);
-            bodyVolumes.Add(new HitVolume(parent, center, radius, rotation, block));
-        }
-
-        private static void GuardianMoss(Geometry geometry, Vector3 center, float width, int count, System.Random random)
-        {
-            int[] colors = { 0x899647, 0x929f4d, 0xa6aa51, 0x7d8742, 0x9ca54e };
-            for (int i = 0; i < count; i++)
-            {
-                float t = i / (count - 1f) * 2f - 1f;
-                float radius = width * (0.111f + (float)random.NextDouble() * 0.048f);
-                float height = radius * (0.45f + (float)random.NextDouble() * 0.60f);
-                Vector3 point = center + new Vector3(t * width * 0.50f, -(t * t * 0.17f + 0.033f) * width,
-                    ((float)random.NextDouble() - 0.6f) * width * 0.13f);
-                geometry.Sphere(point, new(radius, height, radius * 1.13f),
-                    Quaternion.Euler(22f, 0f, Mathf.Sign(t) * 23f), colors[i % colors.Length], 7, 5);
-            }
-        }
-
         private void BuildEffects()
         {
             wardRoot = Group(stage, "Mint ward");
@@ -870,16 +767,17 @@ namespace Runeveil
 
             public void Pose(Vector3 elbow, Vector3 wrist, Vector3 fistEuler)
             {
-                PlaceSegment(Upper, shoulder, elbow, 0.55f, 0.84f, 0.62f);
-                PlaceSegment(Lower, elbow, wrist, 0.42f, 0.76f, 0.57f);
+                PlaceSegment(Upper, shoulder, elbow, 0.55f, 0.51f);
+                PlaceSegment(Lower, elbow, wrist, 0.43f, 0.47f);
                 Fist.SetLocalPositionAndRotation(wrist, Quaternion.Euler(fistEuler));
             }
 
-            private static void PlaceSegment(Transform part, Vector3 start, Vector3 end, float pivot, float length, float minimum)
+            private static void PlaceSegment(Transform part, Vector3 start, Vector3 end, float pivot, float length)
             {
                 Vector3 direction = end - start;
-                part.SetLocalPositionAndRotation(Vector3.Lerp(start, end, pivot), Quaternion.FromToRotation(Vector3.up, direction));
-                part.localScale = new Vector3(1f, Mathf.Max(minimum, direction.magnitude / length), 1f);
+                Vector3 facing = Vector3.ProjectOnPlane(Vector3.forward, direction);
+                part.SetLocalPositionAndRotation(Vector3.Lerp(start, end, pivot), Quaternion.LookRotation(facing, direction));
+                part.localScale = new Vector3(1f, Mathf.Max(0.6f, direction.magnitude / length), 1f);
             }
         }
 
@@ -919,30 +817,28 @@ namespace Runeveil
             private readonly Vector3 center;
             private readonly Vector3 reciprocalRadius;
             private readonly Quaternion inverseRotation;
-            private readonly bool block;
 
-            public HitVolume(Transform parent, Vector3 center, Vector3 radius, Quaternion rotation, bool block)
+            public HitVolume(Transform parent, Vector3 center, Vector3 radius, Quaternion rotation)
             {
                 this.parent = parent;
                 this.center = center;
                 reciprocalRadius = new Vector3(1f / radius.x, 1f / radius.y, 1f / radius.z);
                 inverseRotation = Quaternion.Inverse(rotation);
-                this.block = block;
             }
 
             public float Intersect(Ray ray)
             {
                 Vector3 origin = Vector3.Scale(inverseRotation * (parent.InverseTransformPoint(ray.origin) - center), reciprocalRadius);
                 Vector3 direction = Vector3.Scale(inverseRotation * parent.InverseTransformVector(ray.direction), reciprocalRadius);
-                return block ? IntersectBox(origin, direction) : IntersectSphere(origin, direction, 0.93f);
+                return IntersectSphere(origin, direction);
             }
 
-            public static float IntersectSphere(Vector3 origin, Vector3 direction, float radius)
+            private static float IntersectSphere(Vector3 origin, Vector3 direction)
             {
                 float a = direction.sqrMagnitude;
                 if (a < 0.00001f) return float.PositiveInfinity;
                 float b = Vector3.Dot(origin, direction);
-                float discriminant = b * b - a * (origin.sqrMagnitude - radius * radius);
+                float discriminant = b * b - a * (origin.sqrMagnitude - 1f);
                 if (discriminant < 0f) return float.PositiveInfinity;
                 float sqrt = Mathf.Sqrt(discriminant);
                 float near = (-b - sqrt) / a;
@@ -951,25 +847,6 @@ namespace Runeveil
                 return far >= 0f ? far : float.PositiveInfinity;
             }
 
-            private static float IntersectBox(Vector3 origin, Vector3 direction)
-            {
-                float near = float.NegativeInfinity;
-                float far = float.PositiveInfinity;
-                for (int axis = 0; axis < 3; axis++)
-                {
-                    if (Mathf.Abs(direction[axis]) < 0.00001f)
-                    {
-                        if (Mathf.Abs(origin[axis]) > 0.94f) return float.PositiveInfinity;
-                        continue;
-                    }
-                    float first = (-0.94f - origin[axis]) / direction[axis];
-                    float second = (0.94f - origin[axis]) / direction[axis];
-                    near = Mathf.Max(near, Mathf.Min(first, second));
-                    far = Mathf.Min(far, Mathf.Max(first, second));
-                }
-                if (near > far || far < 0f) return float.PositiveInfinity;
-                return near >= 0f ? near : far;
-            }
         }
 
         private sealed class Geometry
@@ -980,14 +857,6 @@ namespace Runeveil
             };
             public static readonly Vector2[] LanternProfile = {
                 new(0f, -1f), new(0.67f, -1f), new(1f, 0.82f), new(0.92f, 1f), new(0f, 1f)
-            };
-            public static readonly Vector2[] ShieldPlate = {
-                new(0f, -1f), new(0.74f, -1f), new(1f, -0.45f), new(1f, 0.25f), new(0.85f, 0.84f), new(0f, 1f)
-            };
-            public static readonly Vector2[] ChestOutline = {
-                new(-0.96f, -0.10f), new(-0.92f, 0.26f), new(-0.68f, 0.57f), new(-0.36f, 0.68f),
-                new(0f, 0.54f), new(0.36f, 0.68f), new(0.68f, 0.57f), new(0.92f, 0.26f),
-                new(0.96f, -0.10f), new(0.71f, -0.48f), new(0f, -1f), new(-0.71f, -0.48f)
             };
             public static readonly Vector2[] GemProfile = {
                 new(0f, -1f), new(0.73f, -0.47f), new(1f, 0.29f), new(0.67f, 0.7f), new(0f, 1f)
