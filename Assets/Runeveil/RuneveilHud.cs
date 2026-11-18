@@ -10,6 +10,7 @@ namespace Runeveil
         private const float PanelDistance = 1.65f;
         private const float SpatialScale = 0.00082f;
         private const int BossBarWidth = 416;
+        private const float VictoryFadeSeconds = 0.70f;
 
         private static readonly Color32 Ink = new Color32(36, 26, 46, 244);
         private static readonly Color32 Tile = new Color32(56, 41, 64, 255);
@@ -34,6 +35,8 @@ namespace Runeveil
         private RectTransform targeting;
         private RectTransform action;
         private RectTransform notice;
+        private CanvasGroup victoryIllustration;
+        private float victoryFadeElapsed;
         private Image actionFill;
         private Text actionText;
         private Text bossHpText;
@@ -93,6 +96,7 @@ namespace Runeveil
 
             font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
             canvasRect = NewCanvas("Duel HUD");
+            CreateVictoryIllustration();
             CreateBossPanel();
             CreateGuide();
             CreateVitalityPanel();
@@ -159,6 +163,31 @@ namespace Runeveil
             }
             notice.gameObject.SetActive(!string.IsNullOrEmpty(status));
             noticeText.text = status ?? "";
+        }
+
+        public void SetVictoryIllustration(bool won, float deltaTime)
+        {
+            if (victoryIllustration == null)
+                return;
+
+            if (!won)
+            {
+                if (!victoryIllustration.gameObject.activeSelf)
+                    return;
+
+                victoryIllustration.gameObject.SetActive(false);
+                victoryFadeElapsed = 0f;
+                victoryIllustration.alpha = 0f;
+                return;
+            }
+
+            if (!victoryIllustration.gameObject.activeSelf)
+                victoryIllustration.gameObject.SetActive(true);
+            if (victoryFadeElapsed >= VictoryFadeSeconds)
+                return;
+
+            victoryFadeElapsed = Mathf.Min(VictoryFadeSeconds, victoryFadeElapsed + Mathf.Clamp(deltaTime, 0f, 0.1f));
+            victoryIllustration.alpha = Mathf.SmoothStep(0f, 1f, victoryFadeElapsed / VictoryFadeSeconds);
         }
 
         public void SetControlHint(string hint)
@@ -509,6 +538,30 @@ namespace Runeveil
             ImageBox("Button bottom edge", action, 440, 4, 0, -36, new Color32(203, 142, 88, 255));
             actionText = Label("Button label", action, "", 27, Ink, 406, 60, 0, 2, TextAnchor.MiddleCenter, true);
             action.gameObject.SetActive(false);
+        }
+
+        private void CreateVictoryIllustration()
+        {
+            Texture2D texture = Resources.Load<Texture2D>("Runeveil/MuseRestored");
+            if (texture == null)
+                return;
+
+            const float maxWidth = 680f;
+            const float maxHeight = 532f;
+            float aspect = texture.width / (float)texture.height;
+            float width = Mathf.Min(maxWidth, maxHeight * aspect);
+            float height = width / aspect;
+            RectTransform portrait = Panel("Restored Muse illustration", canvasRect, width + 8f, height + 8f);
+            portrait.anchoredPosition = new Vector2(0f, 80f);
+            victoryIllustration = portrait.gameObject.AddComponent<CanvasGroup>();
+            victoryIllustration.interactable = false;
+            victoryIllustration.blocksRaycasts = false;
+            victoryIllustration.alpha = 0f;
+
+            RawImage artwork = RectAt("Muse artwork", portrait, width, height, 0f, 0f).gameObject.AddComponent<RawImage>();
+            artwork.texture = texture;
+            artwork.raycastTarget = false;
+            portrait.gameObject.SetActive(false);
         }
 
         private RectTransform NewCanvas(string name)
