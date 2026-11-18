@@ -154,7 +154,11 @@ namespace Runeveil
             var aimed = active ? target : ArenaTarget.Miss;
             bool wasFocused = duel.FocusReady;
             duel.TrackFocus(arena.IsWeakPointExposed(aimed, duel.Windup) ? aimed : ArenaTarget.Miss, deltaTime);
-            if (Debug.isDebugBuild && usingXr && !wasFocused && duel.FocusReady) focusLocks++;
+            if (Debug.isDebugBuild && usingXr && !wasFocused && duel.FocusReady)
+            {
+                focusLocks++;
+                Debug.Log($"[RuneveilFocus] part={duel.ExposedTarget}");
+            }
             var aim = new AimSample(ray, target, hit, duel.ExposedTarget);
 
             if (usingXr) UpdateHands(aim);
@@ -185,6 +189,7 @@ namespace Runeveil
             };
             hud.Render(duel.BossHealth, duel.Hearts, duel.Shield, focus, spellLabel, status,
                 duel.Phase == DuelPhase.Practice, action, usingXr);
+            hud.SetVictoryIllustration(duel.Phase == DuelPhase.Won, Time.unscaledDeltaTime);
             hud.SetControlHint(!usingXr && !preview ? "Connect a headset to draw and aim" : null);
             hud.SetActionFocus(usingXr ? ray : mousePointer);
             hud.SetHand(handPosition);
@@ -301,6 +306,7 @@ namespace Runeveil
             ClearStroke();
             duel.StartBattle();
             arena.ResetArena();
+            hud.SetVictoryIllustration(false, 0f);
             spellLabel = "";
             resultSummary = "";
             Notify("Duel started");
