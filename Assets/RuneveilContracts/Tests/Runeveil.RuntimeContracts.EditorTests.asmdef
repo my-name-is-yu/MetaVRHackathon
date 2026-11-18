@@ -1,0 +1,14 @@
+{
+    "name": "Runeveil.RuntimeContracts.EditorTests",
+    "rootNamespace": "Runeveil.Contracts.Tests",
+    "references": [
+        "Runeveil.RuntimeContracts"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "optionalUnityReferences": [
+        "TestAssemblies"
+    ],
+    "autoReferenced": false
+}

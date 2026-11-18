@@ -1,0 +1,5 @@
+{
+    "name": "Runeveil.RuntimeContracts",
+    "rootNamespace": "Runeveil.Contracts",
+    "autoReferenced": true
+}

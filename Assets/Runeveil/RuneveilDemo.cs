@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using Runeveil.Contracts;
 using UnityEngine;
 using UnityEngine.InputSystem;
 using UnityEngine.XR;
@@ -95,14 +96,16 @@ namespace Runeveil
 
         readonly struct AimSample
         {
-            public readonly Ray? Ray;
+            public readonly Ray? SpellRay;
+            public readonly Ray? MenuActionRay;
             public readonly SpellTarget Target;
             public readonly Vector3 Hit;
             public readonly bool AssumedGaze;
 
-            public AimSample(Ray? ray, SpellTarget target, Vector3 hit, bool assumedGaze)
+            public AimSample(Ray? spellRay, Ray? menuActionRay, SpellTarget target, Vector3 hit, bool assumedGaze)
             {
-                Ray = ray;
+                SpellRay = spellRay;
+                MenuActionRay = menuActionRay;
                 Target = target;
                 Hit = hit;
                 AssumedGaze = assumedGaze;
@@ -170,6 +173,13 @@ namespace Runeveil
             }
         }
 
+        string MenuAction => duel.Phase switch
+        {
+            DuelPhase.Practice => "Start duel",
+            DuelPhase.Won or DuelPhase.Lost => "Fight again",
+            _ => ""
+        };
+
         void LateUpdate()
         {
             bool xrActive = HasXrDisplay();
@@ -193,24 +203,37 @@ namespace Runeveil
             }
 
             Ray? mousePointer = null;
-            Ray? ray = null;
-            if (usingXr) ray = assumed ? AssumedGaze() : ReadGaze();
-            else if (preview) ray = MouseAim(out mousePointer);
+            Ray? spellRay = null;
+            Ray? menuActionRay = null;
+            bool headMenuAim = false;
+            if (usingXr && !assumed)
+            {
+                Ray? eyeRay = ReadGaze();
+                bool menuActionAvailable = active && MenuAction.Length != 0;
+                headMenuAim = menuActionAvailable && !eyeRay.HasValue;
+                Transform head = xrRig.centerEyeAnchor;
+                Ray headRay = headMenuAim ? new Ray(head.position, head.forward) : default;
+                var rays = RuneveilInputPolicy.Resolve(eyeRay, headRay, menuActionAvailable);
+                spellRay = rays.SpellRay;
+                menuActionRay = rays.MenuActionRay;
+            }
+            else if (assumed) spellRay = AssumedGaze();
+            else if (preview) spellRay = MouseAim(out mousePointer);
             Vector3 hit = default;
             ArenaTarget target = ArenaTarget.Miss;
-            if (active && ray.HasValue)
+            if (active && spellRay.HasValue)
             {
                 if (assumed)
                 {
                     target = duel.WeakPoint;
                     hit = arena.WeakPointPosition(target);
                 }
-                else target = arena.Aim(ray.Value, out hit);
+                else target = arena.Aim(spellRay.Value, out hit);
             }
             bool wasFocused = duel.FocusReady;
             duel.TrackFocus(arena.CanFocus(target) ? target : ArenaTarget.Miss, deltaTime);
             if (Debug.isDebugBuild && usingXr && !assumed && !wasFocused && duel.FocusReady) focusLocks++;
-            var aim = new AimSample(ray, duel.CaptureTarget(target), hit, assumed);
+            var aim = new AimSample(spellRay, menuActionRay, duel.CaptureTarget(target), hit, assumed);
 
             if (usingXr) UpdateHands(aim);
             else if (preview) UpdateMouse(aim);
@@ -219,7 +242,7 @@ namespace Runeveil
                 ClearStroke();
                 pendingDesktopAction = locked = false;
             }
-            if (Debug.isDebugBuild) ReportInputs(!assumed && ray.HasValue);
+            if (Debug.isDebugBuild) ReportInputs(!assumed && spellRay.HasValue);
             arena.Tick(deltaTime, duel.Windup, duel.Shield, duel.Phase == DuelPhase.Won, target,
                 duel.Stagger > 0, duel.Stuck > 0, duel.Enraged, duel.WeakPoint, duel.ShatteredPoint,
                 duel.FocusProgress, duel.FocusReady);
@@ -234,21 +257,20 @@ namespace Runeveil
                 _ when target.IsWeakPoint() && duel.FocusProgress > 0 => $"Focusing on {target.DisplayName().ToLowerInvariant()}",
                 _ when target.IsWeakPoint() => target.DisplayName(),
                 ArenaTarget.Body => locked ? "Muse locked" : "Corrupted Muse",
-                _ => usingXr && !ray.HasValue ? "Eye gaze unavailable" : locked ? "Aim locked" : ""
+                _ => usingXr && !spellRay.HasValue ? "Eye gaze unavailable" : locked ? "Aim locked" : ""
             };
             if (assumed) focus = $"Debug gaze · {focus}";
-            string status = Time.unscaledTime < noticeUntil ? notice : DefaultStatus();
-            string action = duel.Phase switch
-            {
-                DuelPhase.Practice => "Start duel",
-                DuelPhase.Won or DuelPhase.Lost => "Fight again",
-                _ => ""
-            };
+            string action = MenuAction;
+            string status = Time.unscaledTime < noticeUntil
+                ? notice
+                : headMenuAim && action.Length != 0
+                    ? "HEAD AIM · MENU ONLY\nPoint your head at the button and pinch."
+                    : DefaultStatus();
             hud.Render(duel.BossHealth, duel.Hearts, duel.Shield, focus, spellLabel, status,
                 duel.Phase == DuelPhase.Practice, action, usingXr);
             hud.SetVictoryIllustration(duel.Phase == DuelPhase.Won, Time.unscaledDeltaTime);
             hud.SetControlHint(!usingXr && !preview ? "Connect a headset to draw and aim" : null);
-            hud.SetActionFocus(usingXr ? ray : mousePointer);
+            hud.SetActionFocus(usingXr ? menuActionRay : mousePointer);
             hud.SetHand(handPosition);
             hud.SetPinchMeter(usingXr && Pinch.showDebugMeter, leftPinch, rightPinch, Pinch);
             for (var spell = Spell.Fire; spell <= Spell.Barrier; spell++)
@@ -816,7 +838,8 @@ namespace Runeveil
             bool shortPinch = usingXr && Time.unscaledTime - strokeStarted <= settings.tapMaxDuration &&
                 maxDisplacementSquared <= settings.tapMaxMovement * settings.tapMaxMovement;
             // デバッグ時はボタンが出ていれば、見ていなくても押したことにする
-            bool onAction = aim.AssumedGaze ? duel.Phase != DuelPhase.Battle : aim.Ray.HasValue && hud.ActionHit(aim.Ray.Value);
+            bool onAction = MenuAction.Length != 0 &&
+                (aim.AssumedGaze || (aim.MenuActionRay.HasValue && hud.ActionHit(aim.MenuActionRay.Value)));
             if (!recognized.HasValue && shortPinch && onAction)
             {
                 StartBattle();
@@ -853,7 +876,7 @@ namespace Runeveil
             {
                 target = duel.CaptureTarget(ArenaTarget.Body);
                 hit = arena.BodyPoint(view.transform.position);
-                if (!aim.Ray.HasValue) RecordCast(spell, target.Part, "fallback-aim", aim.AssumedGaze);
+                if (!aim.SpellRay.HasValue) RecordCast(spell, target.Part, "fallback-aim", aim.AssumedGaze);
             }
             float travel = arena.Cast(spell.Value, point, hit, view.transform.position, view.transform.forward, level);
             sfx.PlayCast(spell.Value, point, Pinch, level);
