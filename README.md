@@ -7,6 +7,21 @@ This template provides a VR-ready project with the Meta XR SDKs needed to develo
 
 [公開版で遊ぶ](https://runeveil-golem-duel.yasei-no-otoko.chatgpt.site/) · [起動方法と魔法の描き方](web/README.md)
 
+### Unity 6.7でGlasses用APKを作る
+
+Unity Hubで **6000.7.0b9** と **Android Build Support**（SDK、NDK、OpenJDKを含む）を導入し、Git LFSのファイルを取得してからこのリポジトリを開きます。起動シーンは `Assets/Scenes/Runeveil.unity` です。EditorのビルドターゲットをAndroidにして、メニューの **Runeveil → Build Glasses APK** を選びます。Editorを閉じた状態ならUnity CLIからも同じAPKを作れます。
+
+```sh
+git lfs pull
+unity build . --target Android --execute-method Runeveil.Editor.RuneveilBuild.BuildApk
+metavr app install Builds/Runeveil/Runeveil.apk
+metavr app launch com.runeveil.golemduel
+```
+
+Glassesで眼球追跡の使用を許可し、頭を正面に向けたまま目を左右に動かします。ピンチして指で描いた模様を、離した瞬間の視線へ撃ちます。横線のバリアは視線を失っても張れます。
+
+Unity版はMeta XR SDK 209の `OVRPlugin.GetEyeGazeInteractionState` で両眼を合わせた照準の有効性を読み、同じフレームの手指姿勢と組み合わせます。開発用APKの `[RuneveilInput]` ログは視線が有効だったフレーム数と、頭に対して視線が動いたことを確認できたフレーム数を集計します。視線座標は記録しません。[MetaのUnity向け視線インタラクション資料](https://developers.meta.com/vr/documentation/unity/move-eye-tracking-interactions/)
+
 ### 公開版とUSBローカル版の比較
 
 2026年11月18日、同じMeta VR GlassesのHorizon Browser 156.0.0.38で、公開URLとUSB経由の `https://localhost:51916/` をそれぞれ直接開いて確認しました。
