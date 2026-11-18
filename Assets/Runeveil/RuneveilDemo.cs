@@ -234,6 +234,7 @@ namespace Runeveil
             };
             hud.Render(duel.BossHealth, duel.Hearts, duel.Shield, focus, spellLabel, status,
                 duel.Phase == DuelPhase.Practice, action, usingXr);
+            hud.SetVictoryIllustration(duel.Phase == DuelPhase.Won, Time.unscaledDeltaTime);
             hud.SetControlHint(!usingXr && !preview ? "Connect a headset to draw and aim" : null);
             hud.SetActionFocus(usingXr ? ray : mousePointer);
             hud.SetHand(handPosition);
@@ -359,6 +360,7 @@ namespace Runeveil
             pendingHits.Clear();
             duel.StartBattle();
             arena.ResetArena();
+            hud.SetVictoryIllustration(false, 0f);
             spellLabel = "";
             resultSummary = "";
             Notify("Duel started");
