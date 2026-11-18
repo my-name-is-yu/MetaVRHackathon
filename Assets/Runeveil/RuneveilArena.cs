@@ -316,12 +316,12 @@ namespace Runeveil
         }
 
         private Transform Draw(Transform parent, Mesh mesh, Material material, Vector3 at, Vector3 scale, string name,
-            Quaternion rotation = default)
+            Quaternion? rotation = null)
         {
             var go = new GameObject(name,typeof(MeshFilter),typeof(MeshRenderer));
             var pose = go.transform;
             pose.SetParent(parent,false);
-            pose.SetLocalPositionAndRotation(at,rotation==default?Quaternion.identity:rotation);
+            pose.SetLocalPositionAndRotation(at,rotation ?? Quaternion.identity);
             pose.localScale=scale;
             go.GetComponent<MeshFilter>().sharedMesh=mesh;
             var renderer=go.GetComponent<MeshRenderer>();
@@ -335,14 +335,14 @@ namespace Runeveil
         private sealed class Batch
         {
             private readonly Dictionary<Material,List<CombineInstance>> parts = new Dictionary<Material,List<CombineInstance>>();
-            public void Add(Mesh mesh,Material material,Vector3 at,Vector3 scale,Quaternion pose=default)
+            public void Add(Mesh mesh,Material material,Vector3 at,Vector3 scale,Quaternion? pose=null)
             {
                 if (!parts.TryGetValue(material,out var group))
                 {
                     group=new List<CombineInstance>();
                     parts.Add(material,group);
                 }
-                group.Add(new CombineInstance {mesh=mesh,transform=Matrix4x4.TRS(at,pose==default?Quaternion.identity:pose,scale)});
+                group.Add(new CombineInstance {mesh=mesh,transform=Matrix4x4.TRS(at,pose ?? Quaternion.identity,scale)});
             }
             public void Place(RuneveilArena arena,Transform parent,string name)
             {
@@ -976,7 +976,7 @@ namespace Runeveil
             return arm;
         }
 
-        private void Body(Transform parent,Material paint,Vector3 at,Vector3 scale,Quaternion pose=default) =>
+        private void Body(Transform parent,Material paint,Vector3 at,Vector3 scale,Quaternion? pose=null) =>
             stoneHits.Add(Draw(parent,rockMesh,paint,at,scale,"Molded purple stone",pose));
 
         private void MossLedge(Transform parent,Vector3 at,float width,int count)
