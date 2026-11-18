@@ -52,6 +52,34 @@ namespace Runeveil
         private float wardFlashTime;
         private float wardOpacity;
 
+        // Charge-complete effect that follows the casting fingertip.
+        private const int FlameCount = 5;
+        private const int EmberCount = 7;
+        private const float ChargeBurstTime = 0.38f;
+        private Transform chargeRoot;
+        private MeshRenderer chargeHalo;
+        private MeshRenderer chargeCore;
+        private MeshRenderer chargeBurst;
+        private readonly MeshRenderer[] chargeFlames = new MeshRenderer[FlameCount];
+        private readonly MeshRenderer[] chargeEmbers = new MeshRenderer[EmberCount];
+        private Spell? chargeSpell;
+
+        // Sparks that trail the drawing fingertip.
+        private const int SparkCount = 72;
+        private Transform sparkRoot;
+        private readonly MeshRenderer[] sparks = new MeshRenderer[SparkCount];
+        private readonly Vector3[] sparkVelocity = new Vector3[SparkCount];
+        private readonly float[] sparkAge = new float[SparkCount];
+        private readonly float[] sparkLife = new float[SparkCount];
+        private readonly float[] sparkSize = new float[SparkCount];
+        private readonly bool[] sparkHot = new bool[SparkCount];
+        private int nextSpark;
+        private float sparkBudget;
+        private Vector3 lastSparkTip;
+        private bool hadSparkTip;
+        private float chargeAge;
+        private float chargeOpacity;
+
         public Transform Core { get; private set; }
 
         public void Build()
@@ -639,8 +667,179 @@ namespace Runeveil
             }
         }
 
+        private void BuildSparks()
+        {
+            sparkRoot = Group(stage, "Drawing sparks");
+            for (int i = 0; i < SparkCount; i++)
+            {
+                sparks[i] = Render(sparkRoot, "Spark", softDisc, softGlow);
+                sparks[i].gameObject.SetActive(false);
+                sparkAge[i] = -1f;
+            }
+        }
+
+        /// <summary>
+        /// Call every frame. While emitting, sparks fly off the fingertip; faster strokes throw more.
+        /// Hot sparks (fire charged) burn orange-red.
+        /// </summary>
+        public void TickSparks(bool emit, Vector3 tip, float speed, bool hot, float amount, Vector3 head, float dt)
+        {
+            if (sparkRoot == null) return;
+            dt = Mathf.Clamp(dt, 0f, 0.05f);
+            if (emit && dt > 0f)
+            {
+                Vector3 motion = hadSparkTip ? tip - lastSparkTip : Vector3.zero;
+                float rate = Mathf.Lerp(12f, 110f, Mathf.Clamp01(speed / 0.7f)) * amount;
+                sparkBudget += rate * dt;
+                Vector3 inherit = motion / dt * 0.25f;
+                while (sparkBudget >= 1f)
+                {
+                    sparkBudget -= 1f;
+                    SpawnSpark(tip - motion * UnityEngine.Random.value, inherit, hot);
+                }
+                lastSparkTip = tip;
+                hadSparkTip = true;
+            }
+            else
+            {
+                sparkBudget = 0f;
+                hadSparkTip = false;
+            }
+
+            for (int i = 0; i < SparkCount; i++)
+            {
+                if (sparkAge[i] < 0f) continue;
+                sparkAge[i] += dt;
+                float life = sparkAge[i] / sparkLife[i];
+                if (life >= 1f)
+                {
+                    sparkAge[i] = -1f;
+                    sparks[i].gameObject.SetActive(false);
+                    continue;
+                }
+                Transform spark = sparks[i].transform;
+                sparkVelocity[i] += Vector3.down * (1.4f * dt);
+                sparkVelocity[i] *= 1f - Mathf.Min(1f, 2.2f * dt);
+                spark.position += sparkVelocity[i] * dt;
+                Vector3 facing = spark.position - head;
+                if (facing.sqrMagnitude > 0.0001f && sparkVelocity[i].sqrMagnitude > 1e-6f)
+                    spark.rotation = Quaternion.LookRotation(facing, sparkVelocity[i]);
+                float size = sparkSize[i] * (1f - life * 0.55f);
+                float stretch = 1f + Mathf.Min(3.5f, sparkVelocity[i].magnitude * 9f);
+                spark.localScale = new Vector3(size, size * stretch, 1f);
+                Color color = sparkHot[i]
+                    ? Color.Lerp(Rgb(0xffe0a0), Rgb(0xff4a1c), life)
+                    : Color.Lerp(Rgb(0xfff6d8), Rgb(0xffa83d), life);
+                Tint(sparks[i], color, Mathf.Pow(1f - life, 1.4f) * 0.95f);
+            }
+        }
+
+        private void SpawnSpark(Vector3 at, Vector3 inherit, bool hot)
+        {
+            int i = nextSpark;
+            nextSpark = (nextSpark + 1) % SparkCount;
+            sparkAge[i] = 0f;
+            sparkLife[i] = UnityEngine.Random.Range(0.2f, 0.48f);
+            sparkSize[i] = UnityEngine.Random.Range(0.004f, 0.009f) * (hot ? 1.25f : 1f);
+            sparkHot[i] = hot;
+            sparkVelocity[i] = UnityEngine.Random.onUnitSphere * UnityEngine.Random.Range(0.12f, 0.5f) +
+                Vector3.up * 0.08f + inherit;
+            sparks[i].transform.position = at;
+            sparks[i].gameObject.SetActive(true);
+        }
+
+        private void BuildChargeEffect()
+        {
+            chargeRoot = Group(stage, "Fire charge");
+            chargeHalo = Render(chargeRoot, "Charge halo", softDisc, softGlow);
+            for (int i = 0; i < FlameCount; i++)
+                chargeFlames[i] = Render(chargeRoot, "Flame tongue", softDisc, softGlow);
+            chargeCore = Render(chargeRoot, "Charge core", softDisc, softGlow);
+            for (int i = 0; i < EmberCount; i++)
+                chargeEmbers[i] = Render(chargeRoot, "Ember", softDisc, softGlow);
+            chargeBurst = Render(chargeRoot, "Charge burst", softDisc, softGlow);
+            chargeRoot.gameObject.SetActive(false);
+        }
+
+        /// <summary>
+        /// Shows the charged-spell effect at the fingertip. Pass null to let it fade out.
+        /// Call every frame; a change from null to a spell plays the charge-complete burst.
+        /// </summary>
+        public void SetCharge(Spell? spell, Vector3 position, Vector3 head, float dt)
+        {
+            if (chargeRoot == null) return;
+            dt = Mathf.Clamp(dt, 0f, 0.05f);
+            if (spell.HasValue && spell != chargeSpell) chargeAge = 0f;
+            if (spell.HasValue) chargeSpell = spell;
+            chargeOpacity = spell.HasValue ? 1f : Mathf.Max(0f, chargeOpacity - dt * 9f);
+            if (chargeOpacity <= 0f)
+            {
+                chargeSpell = null;
+                if (chargeRoot.gameObject.activeSelf) chargeRoot.gameObject.SetActive(false);
+                return;
+            }
+
+            chargeAge += dt;
+            if (!chargeRoot.gameObject.activeSelf) chargeRoot.gameObject.SetActive(true);
+            if (spell.HasValue) chargeRoot.position = position;
+            Vector3 facing = chargeRoot.position - head;
+            if (facing.sqrMagnitude > 0.0001f) chargeRoot.rotation = Quaternion.LookRotation(facing, Vector3.up);
+
+            float a = chargeOpacity;
+            float t = chargeAge;
+            // Ignition pop: everything swells briefly when the charge completes.
+            float pop = 1f + 0.55f * Mathf.Exp(-t * 9f);
+            float breathe = 1f + 0.08f * Mathf.Sin(t * 7.3f) + 0.05f * Mathf.Sin(t * 13.1f);
+
+            chargeHalo.transform.localPosition = new Vector3(0f, 0.008f, 0.004f);
+            chargeHalo.transform.localScale = Vector3.one * 0.15f * pop * breathe;
+            Tint(chargeHalo, Rgb(0xff5a2a), 0.42f * a);
+
+            for (int i = 0; i < FlameCount; i++)
+            {
+                float phase = i * 1.37f;
+                float flicker = 0.75f + 0.25f * Mathf.Sin(t * (11f + i * 2.3f) + phase) +
+                    0.12f * Mathf.Sin(t * (23f + i * 3.1f) + phase * 2f);
+                float x = (i - (FlameCount - 1) * 0.5f) * 0.0105f + 0.003f * Mathf.Sin(t * 6f + phase);
+                float height = (i == FlameCount / 2 ? 0.085f : 0.06f - Mathf.Abs(i - FlameCount / 2) * 0.008f) * flicker * pop;
+                Transform flame = chargeFlames[i].transform;
+                flame.localPosition = new Vector3(x, height * 0.42f, 0.001f * i);
+                flame.localRotation = Quaternion.Euler(0f, 0f, -x * 380f + 6f * Mathf.Sin(t * 9f + phase));
+                flame.localScale = new Vector3(0.032f * (0.9f + 0.1f * flicker), height, 1f);
+                Tint(chargeFlames[i], Color.Lerp(Rgb(0xff7a2e), Rgb(0xffc04d), 0.5f + 0.5f * Mathf.Sin(phase)),
+                    0.85f * a);
+            }
+
+            chargeCore.transform.localPosition = new Vector3(0f, 0.004f, -0.002f);
+            chargeCore.transform.localScale = Vector3.one * 0.042f * pop * breathe;
+            Tint(chargeCore, Rgb(0xfff1b8), 0.95f * a);
+
+            for (int i = 0; i < EmberCount; i++)
+            {
+                float speed = 0.55f + 0.17f * (i % 3);
+                float rise = Mathf.Repeat(t * speed + i / (float)EmberCount, 1f);
+                float sway = Mathf.Sin(t * 3.1f + i * 2.2f) * 0.012f + (i - EmberCount * 0.5f) * 0.004f;
+                Transform ember = chargeEmbers[i].transform;
+                ember.localPosition = new Vector3(sway, 0.012f + rise * 0.11f, -0.003f);
+                ember.localScale = Vector3.one * Mathf.Lerp(0.014f, 0.005f, rise);
+                Tint(chargeEmbers[i], Color.Lerp(Rgb(0xffd27a), Rgb(0xff4d1f), rise), (1f - rise) * 0.9f * a);
+            }
+
+            float burst = Mathf.Clamp01(t / ChargeBurstTime);
+            bool bursting = burst < 1f;
+            if (chargeBurst.gameObject.activeSelf != bursting) chargeBurst.gameObject.SetActive(bursting);
+            if (bursting)
+            {
+                chargeBurst.transform.localPosition = new Vector3(0f, 0f, -0.004f);
+                chargeBurst.transform.localScale = Vector3.one * Mathf.Lerp(0.05f, 0.36f, 1f - (1f - burst) * (1f - burst));
+                Tint(chargeBurst, Rgb(0xffb347), (1f - burst) * 0.9f);
+            }
+        }
+
         private void BuildEffects()
         {
+            BuildChargeEffect();
+            BuildSparks();
             wardRoot = Group(stage, "Mint ward");
             var shell = new Geometry("Ward hemisphere");
             shell.Ward(new(0f, 0.13f, 0.29f), new(1.80f, 1.29f, 1.43f));

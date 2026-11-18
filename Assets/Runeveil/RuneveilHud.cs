@@ -50,6 +50,7 @@ namespace Runeveil
         private int currentBossHp = -1;
 
         private RectTransform handCard;
+        private Text handLabel;
         private Vector3? handPosition;
         private bool inkBeingDrawn;
         private LineRenderer stroke;
@@ -97,7 +98,7 @@ namespace Runeveil
 
             handCard = NewCanvas("Casting hand");
             RectTransform card = Panel("Casting feedback", handCard, 186, 42);
-            Label("Feedback", card, "Drawing rune", 23, Mint, 166, 38, 0, 0);
+            handLabel = Label("Feedback", card, "Drawing rune", 23, Mint, 166, 38, 0, 0);
             handCard.gameObject.SetActive(false);
 
             var strokeObject = new GameObject("Rune ink");
@@ -282,6 +283,14 @@ namespace Runeveil
             }
             string distance = float.IsInfinity(pinch.Distance) ? "--" : $"{pinch.Distance * 100f:0.0}cm";
             row.Detail.text = pinch.SystemPinch ? distance + " •" : distance;
+        }
+
+        /// <summary>Text shown on the card under the drawing hand.</summary>
+        public void SetHandLabel(string text, Color color)
+        {
+            if (handLabel == null) return;
+            if (handLabel.text != text) handLabel.text = text;
+            handLabel.color = color;
         }
 
         public void SetHand(Vector3? worldPosition)
