@@ -38,6 +38,8 @@ MonoBehaviour:
   chargeVolume: 1
   castVolume: 1
   impactVolume: 1
+  musicVolume: 0.45
+  jingleVolume: 1.2
   sparks: 1
   sparkAmount: 1
   showDebugMeter: 0
