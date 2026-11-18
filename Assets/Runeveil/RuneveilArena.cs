@@ -172,7 +172,7 @@ namespace Runeveil
             float fraction=maxBossHP>0?Mathf.Clamp01(bossHP/(float)maxBossHP):0;
             bossFill.gameObject.SetActive(fraction>0);
             bossFill.localScale=new Vector3(1.99f*fraction,.054f,.014f);
-            bossFill.localPosition=new Vector3((fraction-1)*.995f,0,-.027f);
+            bossFill.localPosition=new Vector3((fraction-1)*.995f,0,-.042f);
             for(int i=0;i<heartSlots.Length;i++) heartSlots[i].sharedMaterial=i<hearts?ivory:emptyHeart;
             action.gameObject.SetActive(!string.IsNullOrEmpty(actionLabel));
             statusPanel.gameObject.SetActive(!string.IsNullOrWhiteSpace(status));
@@ -457,7 +457,7 @@ namespace Runeveil
             var boss=Group(transform,"Golem health",new Vector3(0,3.85f,4.91f));
             Draw(boss,beveledBlock,hudAccent,Vector3.zero,new Vector3(2.11f,.124f,.027f)*.5f,"Gilded track");
             Draw(boss,beveledBlock,hudMuted,new Vector3(0,0,-.018f),new Vector3(2.066f,.089f,.027f)*.5f,"Health track");
-            bossFill=Draw(boss,planeMesh,amber,new Vector3(0,0,-.027f),new Vector3(1.99f,.054f,1),"Golem health fill");
+            bossFill=Draw(boss,planeMesh,amber,new Vector3(0,0,-.042f),new Vector3(1.99f,.054f,1),"Golem health fill");
             var heading=Text(boss,"Mossbound Golem",new Vector3(0,.147f,-.023f),0xffe7bd);
             FitText(heading,"MOSSBOUND GOLEM",1.22f,.072f);
             var player=Group(transform,"Player hearts",new Vector3(-.76f,1.02f,2.05f));
