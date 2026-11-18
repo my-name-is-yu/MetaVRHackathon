@@ -1,29 +1,32 @@
 # Save Muse!
+
 This Unity game is based on Meta's VR Glasses template and uses Meta XR SDKs for **Meta VR Glasses**.
 
 ## Unity instructions
 
-### Unity 版
+### Play the duel
 
-Unity で [`Assets/Scenes/Runeveil.unity`](Assets/Scenes/Runeveil.unity) を開き、Play を押します。このシーンが通常のビルドで最初に起動します。
+Open [`Assets/Scenes/Runeveil.unity`](Assets/Scenes/Runeveil.unity) in Unity and press Play. This is the first scene that loads in a standard build.
 
-- **Meta VR Glasses**では親指と人差し指をつまんでガイドの形を描き、指を離して撃ちます。視線で弱点を狙えます。視線が取れないときは攻撃が胴体に当たり、メニューでは頭をボタンに向けて短くピンチすると `Start duel` と `Fight again` を選べます。
-- **Editor でマウスを使う**ときは、`Runeveil Duel` の Inspector で `Desktop Preview In Editor` を有効にします。左ドラッグで描いて離した位置へ撃ち、右クリックで照準を固定・解除できます。`Start duel` のクリックか Enter キーで本戦を開始します。
-- **Editor で視線なしに試す**ときは、`Runeveil Duel` の Inspector で `Assume Gaze On Target` を有効にします。XR（Meta XR Simulator や Link）でプレイ中、視線は常に光っている弱点を見ている扱いになり、`Start duel` と `Fight again` はどこを見ていても短くピンチすれば押せます。ビルドには含まれません。
-- 本戦はハート5個で始まります。Museの体力は120です。
-- 弱点は胸の宝石、Museの右手、左右の角、振り上げた拳の5か所です。普段は光っている部位を狙えます。狙いは指を離し始めた瞬間に決まり、弾が着くとダメージが入ります。命中した弱点が割れると、0.8秒後に別の部位が光ります。
-- 弱点に狙いが合わないときは、視線を取得できない場合も含めて胴体への命中になります。胴体に入るダメージは、魔法の基本ダメージと溜めによる追加分を足した値の55%です。
-- 火球・雷・氷槍・風刃は、ピンチしたまま同じ形を繰り返すと最大Lv3まで溜められます。溜めの追加ダメージはLv1で0、Lv2で6、Lv3で12です。弱点への命中では、注視やダウンによる補正を計算したあとに加算します。
-- 闇堕ちしたMuseが拳を振り上げたら、5か所のうち撃ちたい部位を0.35秒見続けます。照準の輪が閉じて4つの菱形が現れたら、その部位が露呈し、攻撃に8ダメージが加わります。別の部位に視線を移すと、そこで新たに注視が始まります。
-- 雷（Z）は、同じ予備動作の間に弱点を狙って指を離し始めると、着弾したときに拳を止めます。予備動作が終わる直前でも、指を離したことを確定する時間（XRでは0.12秒）と雷が飛ぶ時間（約0.10秒）だけ判定が待ちます。Museが膝をつく3秒間は、溜めの追加分を除いた弱点ダメージが2倍になります。
-- 横線で張るバリアは1.5秒間、攻撃を一度防ぎます。拳を振り上げたら横線を描き始め、振り下ろしまで残り約1.3秒で弧が強く光ったら指を離します。防ぐと拳が2.2秒間止まって結晶が光り、最初の着弾が弱点ダメージになります。
-- 魔法ごとにクールタイムがあります（火球・氷槍・風刃1.5秒、雷3秒、岩弾4秒、バリア3.5秒）。残り時間は画面下中央に出ます。
-- Museの体力が半分以下になると、次の予備動作から赤い強打に切り替わります。通常の一撃でハートを1個、強打で2個失います。予備動作はどちらも2.4秒で、次の予備動作までの間隔は通常2秒、怒り時は1.5秒です。
-- Museを倒すとファンファーレが鳴り、元の白い姿に戻ったMuseのイラストが現れます。勝利ランクは残りハート5個でS、3〜4個でA、1〜2個でBです。
+- **On Meta VR Glasses**, pinch your thumb and index finger together, trace a shape from the spell guide, and release to cast. Look at a weak point to aim. If the glasses can't track your gaze, your spell hits Muse's torso. To select `Start duel` or `Fight again` in a menu, face the button and pinch briefly.
+- **To play with a mouse in the Unity Editor**, enable `Desktop Preview In Editor` in the `Runeveil Duel` Inspector. Hold the left mouse button and drag to draw. Release to fire at the cursor. Right-click to lock or unlock your aim. Click `Start duel` or press Enter to begin.
+- **To test without eye tracking in the Unity Editor**, enable `Assume Gaze On Target` in the `Runeveil Duel` Inspector. When playing in XR with Meta XR Simulator or Link, the game treats your gaze as fixed on the glowing weak point. You can select `Start duel` or `Fight again` with a brief pinch wherever you're looking. This setting only applies in the Editor.
 
-### Glasses用のAPKをビルドする
+You start the duel with five hearts. Muse starts with 120 health.
 
-Unity Hubで **Unity 6000.7.0b9** と **Android Build Support**（SDK、NDK、OpenJDKを含む）を導入します。Git LFSで素材を取得し、Editorを閉じた状態で次を実行します。
+- **Weak points.** Muse's five weak points are the chest gem, the right hand, the left and right horns, and the raised fist. Normally, you can target whichever one is glowing. Your aim locks in as soon as you start releasing the pinch. The spell deals damage on impact. When a hit shatters a weak point, a different one lights up 0.8 seconds later.
+- **Body hits.** If you aren't aiming at a weak point, or if eye tracking is unavailable, the spell hits the torso for 55% of the sum of its base damage and charge bonus.
+- **Charging spells.** Keep the pinch held and trace the same shape again to charge Fireball, Lightning, Ice spear, or Wind blade up to level 3. The charge bonus is 0 damage at level 1, 6 at level 2, and 12 at level 3. On a weak-point hit, the game adds this bonus after applying any gaze or knockdown modifiers.
+- **Exposing a weak point.** When corrupted Muse raises a fist, hold your gaze on any of the five weak points for 0.35 seconds. When the targeting ring closes and four diamonds appear, that spot is exposed. A hit there deals 8 extra damage. Looking at another spot restarts the gaze timer there.
+- **Interrupting with Lightning.** Trace a Z, aim at a weak point, and start releasing your pinch during the windup. Lightning interrupts the punch when it hits. Even if you start releasing just before the windup ends, the game allows time to confirm the release (0.12 seconds in XR) and for the bolt to land (about 0.10 seconds). Muse drops to one knee for 3 seconds. During that time, weak-point hits deal double damage before the charge bonus is added.
+- **Blocking with Ward.** Draw a horizontal line to cast Ward, a barrier that lasts 1.5 seconds and blocks one attack. Start drawing when Muse raises a fist. Release when the arc glows brightly, about 1.3 seconds before the punch lands. A successful block stops the fist for 2.2 seconds and makes the crystal glow. The first spell to land during that opening deals weak-point damage.
+- **Cooldowns.** Fireball, Ice spear, and Wind blade each take 1.5 seconds to recharge. Lightning takes 3 seconds, Stone shot takes 4 seconds, and Ward takes 3.5 seconds. The remaining time appears at the bottom center of the screen.
+- **Heavy attacks.** Once Muse reaches half health or less, Muse switches to red heavy attacks starting with the next windup. Normal hits cost you one heart and heavy hits cost you two. Both attacks have a 2.4-second windup. The delay before the next windup is 2 seconds normally and 1.5 seconds when Muse is enraged.
+- **Victory.** Defeat Muse to hear a fanfare and see an illustration of Muse restored to the original white form. You earn an S rank with 5 hearts left, an A with 3–4, or a B with 1–2.
+
+### Build the APK for Meta VR Glasses
+
+In Unity Hub, install **Unity 6000.7.0b9** with **Android Build Support**, including the SDK, NDK, and OpenJDK. Close the Editor, then run the following commands to fetch the assets with Git LFS, build the APK, install it, and launch the game.
 
 ```sh
 git lfs pull
@@ -32,10 +35,10 @@ metavr app install Builds/Runeveil/Runeveil.apk
 metavr app launch com.runeveil.golemduel
 ```
 
-Androidに切り替えたEditorの **Runeveil → Build Glasses APK** からも同じ開発用APKを作れます。
+You can also build the same development APK from the Editor. Switch the build target to Android, then choose **Runeveil → Build Glasses APK**.
 
-### 視線を確認する
+### Check eye tracking
 
-Glassesの権限画面で眼球追跡を許可します。装着して頭を正面に向けたまま、目だけを左右に動かしてください。ピンチでZを描き、指を離す直前に胸の結晶を見ます。拳を振り上げたときなら、命中すると攻撃が中断されます。シミュレーターでは機種に **Meta VR Glasses**、入力に **Look and Pinch** を選びます。
+Allow eye tracking when prompted on the glasses. Put them on, keep your head facing forward, and move just your eyes from side to side. Pinch and trace a Z, then look at the chest crystal just before releasing. If the bolt hits while Muse is winding up a punch, it interrupts the attack. In the simulator, select **Meta VR Glasses** as the device and **Look and Pinch** as the input.
 
-開発用APKは、視線サンプルの有効性と、頭の向きに対して視線が動いたことを確認したフレーム数を5秒ごとに集計します。詠唱の結果は魔法・命中部位・結果で記録します。ログに眼球や手指の座標は含めません。[MetaのUnity向け視線入力ガイド](https://developers.meta.com/vr/documentation/unity/move-eye-tracking-interactions/)
+Every 5 seconds, the development APK summarizes gaze sample validity and counts the frames in which it detected eye movement relative to the head. For each cast, it logs the spell, the hit location, and the outcome. The logs omit eye and finger coordinates. See [Meta's guide to eye tracking in Unity](https://developers.meta.com/vr/documentation/unity/move-eye-tracking-interactions/).
