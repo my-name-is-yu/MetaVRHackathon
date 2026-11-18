@@ -1,0 +1,29 @@
+{
+  "$schema": "./node_modules/@iwsdk/core/dist/schemas/iwsdk-project.v1.schema.json",
+  "version": "iwsdk.project.v1",
+  "scene": "./public/scenes/duel.iwsdk.scene.json",
+  "world": {
+    "xr": {
+      "mode": "vr",
+      "offer": "none",
+      "referenceSpace": { "type": "local-floor", "required": true },
+      "features": {
+        "handTracking": { "required": true },
+        "gazeTracking": { "required": true }
+      }
+    },
+    "input": { "canvasPointerEvents": false },
+    "render": { "fov": 60, "near": 0.03, "far": 100, "camera": { "position": [0, 1.6, 0] } },
+    "features": {
+      "gaze": {
+        "trackingLossGraceSeconds": 0,
+        "pointerTransformFollowsHand": false,
+        "showDebugReticle": false
+      }
+    }
+  },
+  "dev": {
+    "emulator": { "device": "metaVRGlasses", "activation": "localhost", "injectOnBuild": false },
+    "targetDevicePreview": { "gazeSimulation": false }
+  }
+}

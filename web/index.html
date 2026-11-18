@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <link rel="stylesheet" href="/src/style.css" />
+    <meta name="theme-color" content="#231b2b" />
+    <title>Runeveil — 星暮れの遺跡</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Crect width='48' height='48' rx='10' fill='%232a2031'/%3E%3Cpath d='M24 4 37 22 24 44 11 22Z M24 4v40 M11 22l13 5 13-5' fill='none' stroke='%23f5cd93' stroke-width='2'/%3E%3C/svg%3E"
+    />
+  </head>
+  <body>
+    <svg class="symbols" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <symbol id="gem" viewBox="0 0 40 44">
+        <path
+          d="M20 2 33 18 29 31 20 42 9 28 7 18Z M20 2l3 17-3 23 M7 18l16 1 10-1 M9 28l14-9 6 12"
+        />
+      </symbol>
+      <symbol id="book" viewBox="0 0 24 24">
+        <path d="M3 5c4-1 6 0 9 2 3-2 5-3 9-2v14c-4-1-6 0-9 2-3-2-5-3-9-2z M12 7v14" />
+      </symbol>
+      <symbol id="visor" viewBox="0 0 24 24">
+        <path
+          d="M5 6h14a2 2 0 0 1 2 2l1 8a2 2 0 0 1-3 2l-4-3H9l-4 3a2 2 0 0 1-3-2l1-8a2 2 0 0 1 2-2Z"
+        />
+      </symbol>
+      <symbol id="shield" viewBox="0 0 24 24">
+        <path d="m12 2 8 3v7c0 5-4 8-8 10-4-2-8-5-8-10V5Z M12 6v11" />
+      </symbol>
+      <symbol id="spark" viewBox="0 0 24 24">
+        <path d="m12 2 2.4 7.6L22 12l-7.6 2.4L12 22l-2.4-7.6L2 12l7.6-2.4Z" />
+      </symbol>
+      <symbol id="location" viewBox="0 0 24 24">
+        <path d="m12 2 8 9-8 11-8-11Z M12 6v10 M8 11h8" />
+      </symbol>
+      <symbol id="sound" viewBox="0 0 24 24">
+        <path d="M3 10h4l5-4v12l-5-4H3z M16 9a4 4 0 0 1 0 6 M19 6a8 8 0 0 1 0 12" />
+      </symbol>
+      <symbol id="arrow" viewBox="0 0 24 24"><path d="M4 12h15m-6-6 6 6-6 6" /></symbol>
+      <symbol id="heart" viewBox="0 0 28 26">
+        <path d="M14 24C11 20 2 15 2 8.6 2 2 10-.3 14 5.5 18-.3 26 2 26 8.6 26 15 17 20 14 24Z" />
+      </symbol>
+    </svg>
+    <header class="masthead">
+      <div class="wordmark">
+        <svg class="brandmark"><use href="#gem" /></svg><span>Runeveil</span>
+      </div>
+      <span class="brand-divider"></span><span class="descriptor">VR 魔法バトル</span>
+      <nav aria-label="ゲームメニュー">
+        <button class="guide-button" id="open-book" aria-label="魔導書">
+          <svg><use href="#book" /></svg><span>魔導書</span>
+        </button>
+        <button class="vr-button" id="enter-vr" disabled>
+          <svg><use href="#visor" /></svg><span>VRでプレイ</span>
+        </button>
+      </nav>
+    </header>
+    <main id="game" data-phase="practice" aria-label="星暮れの遺跡 魔法バトル">
+      <div id="viewport" aria-label="ゴーレムと戦う3Dフィールド"></div>
+      <div class="vignette"></div>
+      <div class="stage-tag">
+        <span class="place"
+          ><svg><use href="#location" /></svg>星暮れの遺跡</span
+        ><span id="mode-tag">練習</span>
+      </div>
+      <div class="boss-hud">
+        <div class="boss-title">
+          <span class="wing"></span><span>苔冠のゴーレム</span><span class="wing"></span>
+        </div>
+        <div
+          class="boss-track"
+          role="progressbar"
+          aria-label="ゴーレムの体力"
+          aria-valuemin="0"
+          aria-valuemax="120"
+          aria-valuenow="120"
+        >
+          <i id="boss-fill"></i>
+        </div>
+      </div>
+      <div id="callout" aria-live="polite"></div>
+      <div class="bottom-hud">
+        <div class="vitality">
+          <div class="caption">生命力</div>
+          <div id="hearts"></div>
+        </div>
+        <div class="wrist" aria-label="手元の魔法表示">
+          <span class="wrist-slot defense"
+            ><svg><use href="#shield" /></svg>バリア</span
+          >
+          <span class="wrist-slot offense"
+            ><svg><use href="#spark" /></svg>攻撃魔法</span
+          >
+        </div>
+      </div>
+      <div class="load-state" id="load-state" role="status">遺跡を読み込み中…</div>
+    </main>
+    <footer class="command-bar">
+      <div id="lesson">
+        <span id="lesson-icon"
+          ><svg><use href="#spark" /></svg
+        ></span>
+        <div>
+          <strong id="lesson-title">詠唱の練習</strong>
+          <p id="lesson-text">ドラッグで模様を描き、離して詠唱。右クリックで狙いを固定。</p>
+        </div>
+      </div>
+      <div class="footer-actions">
+        <button id="audio" aria-label="効果音をオン" aria-pressed="false">
+          <svg><use href="#sound" /></svg></button
+        ><button id="start-duel" disabled>
+          決闘を始める <svg><use href="#arrow" /></svg>
+        </button>
+      </div>
+    </footer>
+    <dialog id="spellbook" aria-labelledby="book-title">
+      <div class="book-top">
+        <span class="book-mark"
+          ><svg><use href="#book" /></svg></span
+        ><button id="close-book" aria-label="閉じる">×</button>
+      </div>
+      <h1 id="book-title">魔導書</h1>
+      <p>
+        親指と人差し指をつまんで、一筆で描きます。<br />指を離した瞬間に見ていた場所へ、魔法が飛びます。
+      </p>
+      <div id="spell-list"></div>
+      <p class="book-note">拳が上がったら、胸の結晶に雷を。バリアは次の一撃を防ぎます。</p>
+    </dialog>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
