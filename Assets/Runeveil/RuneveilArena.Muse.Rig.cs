@@ -112,7 +112,7 @@ namespace Runeveil
         private void TickMuseRig(float dt, float windup, bool won, bool staggered, bool stuck,
             bool heavyStrike, bool wardReleaseWindow)
         {
-            RevealCue reveal = museRig.Tick(dt, windup, won, staggered, stuck, heavyStrike);
+            RevealCue reveal = museRig.Tick(dt, windup, won, staggered, stuck, heavyStrike, strikeContactFrame);
             museRig.TintCorruption(properties, rage);
 
             bool showWarning = windup >= 0f && !won && (!heavyStrike || lift >= 0.16f);
@@ -250,9 +250,6 @@ namespace Runeveil
 
         private sealed class MuseRig
         {
-            private const float WindupEnd = 2.4f;
-            private const float NormalContact = 2.533333f;
-            private const float HeavyContact = 2.59f;
             private const float StaggerHoldEnd = 3f;
             private const float RevealTime = 1.15f;
             private const float RevealGlowStart = 1.01f;
@@ -397,9 +394,12 @@ namespace Runeveil
             public void BeginStrike(bool strong)
             {
                 phase = Phase.Strike;
-                time = WindupEnd;
+                time = RuneveilDuel.WindupSeconds;
                 strongStrike = strong;
             }
+
+            public bool ReachesStrikeContact(float dt) =>
+                phase == Phase.Strike && time + dt >= StrikeContactTime(strongStrike);
 
             public void BeginReaction(ArenaTarget target, bool strong, int level)
             {
@@ -414,7 +414,8 @@ namespace Runeveil
                 reactionWeight = strong ? 1f : Mathf.Min(1f, 0.75f + 0.09f * (level - 1));
             }
 
-            public RevealCue Tick(float dt, float windup, bool won, bool staggered, bool stuck, bool heavyStrike)
+            public RevealCue Tick(float dt, float windup, bool won, bool staggered, bool stuck, bool heavyStrike,
+                bool contactFrame)
             {
                 if (won) return TickCleansing(dt);
 
@@ -431,15 +432,15 @@ namespace Runeveil
                 else if (windup >= 0f)
                 {
                     Enter(Phase.Windup);
-                    time = windup * WindupEnd;
+                    time = windup * RuneveilDuel.WindupSeconds;
                     Sample(heavyStrike ? heavy : normal, time, EntryWeight);
                 }
                 else if (phase == Phase.Strike && (stuck || time < StrikeClip.length))
                 {
-                    float contact = strongStrike ? HeavyContact : NormalContact;
-                    time = Mathf.Min(stuck ? contact : StrikeClip.length, time + dt);
+                    float contact = StrikeContactTime(strongStrike);
+                    time = contactFrame ? contact : Mathf.Min(stuck ? contact : StrikeClip.length, time + dt);
                     StrikeClip.SampleAnimation(model, time);
-                    if (stuck && time >= contact) support = strikingShoulder;
+                    if ((contactFrame || stuck) && time >= contact) support = strikingShoulder;
                 }
                 else
                 {

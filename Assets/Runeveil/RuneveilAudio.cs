@@ -90,6 +90,12 @@ namespace Runeveil
             if (level > 1) Play(touchClip, at, s.sfxVolume * s.chargeVolume * 0.8f, 1.2f + 0.15f * level);
         }
 
+        public void PlayMuseStrike(bool blocked, bool heavy, Vector3 at, RuneveilPinchSettings s)
+        {
+            float volume = s.sfxVolume * s.impactVolume * (heavy ? 0.85f : 0.65f);
+            Play(blocked ? wardClip : impactClip, at, volume, blocked ? 1.35f : heavy ? 0.86f : 1.22f);
+        }
+
         /// <summary>Explosion where the spell lands, scheduled to match its flight time.</summary>
         public void PlayImpact(Spell spell, int level, Vector3 at, float delay, RuneveilPinchSettings s)
         {

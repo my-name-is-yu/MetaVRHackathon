@@ -31,7 +31,7 @@ namespace Runeveil
         public const int ExposedCoreMultiplier = 2;
         public const float ShieldSeconds = 1.5f;
         const float IdleSeconds = 2f;
-        const float WindupSeconds = 2.4f;
+        internal const float WindupSeconds = 2.4f;
         const float EnragedIdleSeconds = 1.5f;
         const float StaggerSeconds = 3f;
         const float StuckSeconds = 2.2f;
@@ -45,6 +45,7 @@ namespace Runeveil
         float focusedSeconds;
         float shieldLeft;
         bool? shieldAtStrike;
+        AttackResult committedStrike;
         float weakGapLeft;
         ArenaTarget weakPoint = ArenaTarget.Core;
         ArenaTarget nextWeakPoint;
@@ -55,6 +56,8 @@ namespace Runeveil
         public int BossHealth { get; private set; } = MaxBossHealth;
         public int Hearts { get; private set; } = MaxHearts;
         public bool Shield { get; private set; }
+        public bool StrikeCommitted => committedStrike != AttackResult.None;
+        public bool WardVisible => StrikeCommitted ? committedStrike == AttackResult.Blocked : (shieldAtStrike ?? Shield);
         public float Windup { get; private set; } = -1;
         public float WindupSecondsLeft => Windup >= 0 ? Mathf.Max(0, attackIn + WindupSeconds) : -1f;
         public int WindupRevision { get; private set; }
@@ -106,10 +109,13 @@ namespace Runeveil
             Recover();
         }
 
-        public AttackResult Step(float deltaTime, bool deferStrike = false)
+        // Commit the guard decision at the input deadline. The arena resolves it at the fist's contact pose.
+        public bool Step(float deltaTime, bool deferStrike = false)
         {
-            if (Finished) return AttackResult.None;
+            if (Finished) return false;
 
+            // The shield can expire later in the frame that crosses the strike deadline.
+            bool wardAtDeadline = Shield && shieldLeft > Mathf.Max(0f, attackIn + WindupSeconds);
             for (int i = 0; i < cooldowns.Length; i++)
                 cooldowns[i] = Mathf.Max(0, cooldowns[i] - deltaTime);
             if (Shield && (shieldLeft -= deltaTime) <= 0) Shield = false;
@@ -119,7 +125,7 @@ namespace Runeveil
             if (Stagger > 0)
             {
                 Stagger = Mathf.Max(0, Stagger - deltaTime);
-                return AttackResult.None;
+                return false;
             }
             if (Stuck > 0)
             {
@@ -129,11 +135,12 @@ namespace Runeveil
                     WardCounterActive = false;
                     weakPointRevision++;
                 }
-                return AttackResult.None;
+                return false;
             }
 
+            if (StrikeCommitted) return false;
             attackIn -= deltaTime;
-            if (attackIn > 0) return AttackResult.None;
+            if (attackIn > 0) return false;
 
             if (Windup < 0)
             {
@@ -142,16 +149,28 @@ namespace Runeveil
             }
 
             Windup = Mathf.Min(1, -attackIn / WindupSeconds);
-            if (Windup < 1) return AttackResult.None;
+            if (Windup < 1) return false;
             if (deferStrike)
             {
-                shieldAtStrike ??= Shield;
+                shieldAtStrike ??= wardAtDeadline;
                 attackIn = -WindupSeconds;
-                return AttackResult.None;
+                return false;
             }
 
-            var blocked = shieldAtStrike ?? Shield;
-            if (blocked)
+            committedStrike = (shieldAtStrike ?? wardAtDeadline) ? AttackResult.Blocked : AttackResult.Hit;
+            Shield = false;
+            Windup = -1f;
+            ClearFocus();
+            return true;
+        }
+
+        public AttackResult ResolveStrike()
+        {
+            AttackResult result = committedStrike;
+            if (result == AttackResult.None) return result;
+
+            float swingTime = RuneveilArena.StrikeTravelSeconds(HeavyStrike);
+            if (result == AttackResult.Blocked)
             {
                 Blocks++;
                 Stuck = StuckSeconds;
@@ -161,12 +180,17 @@ namespace Runeveil
             else if (Phase == DuelPhase.Battle)
             {
                 Hearts = Mathf.Max(0, Hearts - (HeavyStrike ? 2 : 1));
-                if (Hearts == 0) Phase = DuelPhase.Lost;
+                if (Hearts == 0)
+                {
+                    Phase = DuelPhase.Lost;
+                    Shield = false;
+                }
             }
 
-            Shield = false;
             Recover();
-            return blocked ? AttackResult.Blocked : AttackResult.Hit;
+            // An unblocked punch uses part of the original cooldown to travel to contact.
+            if (result == AttackResult.Hit) attackIn -= swingTime;
+            return result;
         }
 
         public void TrackFocus(ArenaTarget target, float deltaTime)
@@ -298,6 +322,7 @@ namespace Runeveil
         {
             attackIn = Enraged ? EnragedIdleSeconds : IdleSeconds;
             shieldAtStrike = null;
+            committedStrike = AttackResult.None;
             Windup = -1;
             HeavyStrike = false;
             ClearFocus();

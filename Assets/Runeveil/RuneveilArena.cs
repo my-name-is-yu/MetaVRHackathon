@@ -77,6 +77,7 @@ namespace Runeveil
         private float rage;
         private float hitStop;
         private float wardFlashTime;
+        private bool strikeContactFrame;
         private float wardOpacity;
         private Transform focusIndicator;
         private MeshRenderer focusCorners;
@@ -248,6 +249,7 @@ namespace Runeveil
                 TickMuseRig(bossDt, windup, won, staggered, stuck, heavyStrike, wardReleaseWindow);
             else
                 TickFallbackMuse(bossDt, won, stuck, heavyStrike, wardReleaseWindow, rising, charge);
+            strikeContactFrame = false;
             int aimedIndex = aimed.WeakPointIndex();
             bool canFocus = activeWeak >= 0 && rising && CanFocus(aimed);
             focusReady &= canFocus;
@@ -262,13 +264,13 @@ namespace Runeveil
             bool rising, float charge)
         {
             TickMuseCleansing(dt, won);
-            slam = Mathf.Max(0f, slam - dt);
+            float strikeDuration = heavyImpact ? MuseHeavyStrikeSeconds : MuseStrikeSeconds;
+            float dropDuration = StrikeTravelSeconds(heavyImpact);
+            slam = strikeContactFrame ? strikeDuration - dropDuration : Mathf.Max(0f, slam - dt);
             pin = Damp(pin, stuck && !won ? 1f : 0f, stuck ? 14f : 5f, dt);
             float coilTarget = rising && heavyStrike ? Mathf.Sin(Mathf.PI * Mathf.Clamp01(charge / 0.34f)) : 0f;
             coil = Damp(coil, coilTarget, 16f, dt);
 
-            float strikeDuration = heavyImpact ? MuseHeavyStrikeSeconds : MuseStrikeSeconds;
-            float dropDuration = heavyImpact ? 0.18f : 0.13f;
             float elapsed = strikeDuration - slam;
             float drop = Mathf.SmoothStep(0f, 1f, elapsed / dropDuration);
             float release = Mathf.SmoothStep(1f, 0f, (elapsed - dropDuration) / (strikeDuration - dropDuration));
@@ -314,7 +316,8 @@ namespace Runeveil
         }
 
         /// <summary>魔法の見た目を出し、攻撃魔法なら着弾までの秒数を返す（バリアは0）。怯みとヒットストップは着弾時の <see cref="Hit"/> で出す。</summary>
-        public float Cast(Spell spell, Vector3 from, Vector3 to, Vector3 head, Vector3 forward, int level = 1)
+        public float Cast(Spell spell, Vector3 from, Vector3 to, Vector3 head, Vector3 forward, int level = 1,
+            bool showWardPulse = true)
         {
             viewHead = head;
             level = Mathf.Max(1, level);
@@ -324,7 +327,7 @@ namespace Runeveil
                 wardRoot.position = head - Vector3.up * 1.58f;
                 forward.y = 0f;
                 if (forward.sqrMagnitude > 0.01f) wardRoot.rotation = Quaternion.LookRotation(forward);
-                wardFlashTime = Mathf.Min(1f, 0.66f + 0.12f * (level - 1));
+                if (showWardPulse) wardFlashTime = Mathf.Min(1f, 0.66f + 0.12f * (level - 1));
                 Vector3 front = head + (forward.sqrMagnitude > 0.01f ? forward.normalized : Vector3.forward) * 0.9f;
                 float power = LevelScale(level);
                 Flare(front, Rgb(0xb5ffe8), 0.6f, 0.2f, 2.2f * power, 0.7f, true);
@@ -421,18 +424,38 @@ namespace Runeveil
             }
         }
 
-        public void Impact(bool blocked, bool heavyStrike)
+        private static float StrikeContactTime(bool heavyStrike) => heavyStrike ? 2.59f : 2.533333f;
+
+        internal static float StrikeTravelSeconds(bool heavyStrike) =>
+            StrikeContactTime(heavyStrike) - RuneveilDuel.WindupSeconds;
+
+        internal void BeginStrike(bool heavyStrike)
         {
             heavyImpact = heavyStrike;
             slam = heavyStrike ? MuseHeavyStrikeSeconds : MuseStrikeSeconds;
-            if (blocked) wardFlashTime = 1f;
             museRig?.BeginStrike(heavyStrike);
+        }
+
+        internal bool ReachesStrikeContact(float dt)
+        {
+            if (HitStopping) return false;
+            dt = Mathf.Clamp(dt, 0f, 0.05f);
+            if (museRig != null) return museRig.ReachesStrikeContact(dt);
+            float duration = heavyImpact ? MuseHeavyStrikeSeconds : MuseStrikeSeconds;
+            return duration - slam + dt >= StrikeTravelSeconds(heavyImpact);
+        }
+
+        internal void Impact(bool blocked)
+        {
+            strikeContactFrame = true;
+            if (blocked) wardFlashTime = 1f;
         }
 
         public void ResetArena()
         {
             age = lift = coil = slam = defeat = pin = rage = hitStop = wardFlashTime = wardOpacity = 0f;
             heavyImpact = false;
+            strikeContactFrame = false;
             boss.localPosition = Vector3.forward * BossDepth;
             ResetMuseReactions();
             museRig?.Reset();

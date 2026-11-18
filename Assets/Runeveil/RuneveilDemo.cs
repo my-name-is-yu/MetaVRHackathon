@@ -259,15 +259,21 @@ namespace Runeveil
                 AdvanceDuel(deltaTime);
             else if (advance && duel.WindupSecondsLeft == 0f)
                 AdvanceDuel(0f);
+            bool heavyContact = duel.HeavyStrike;
+            bool wardBeforeContact = duel.WardVisible;
+            AttackResult contact = ResolveMuseStrike(deltaTime);
             float releaseGrace = usingXr ? Pinch.releaseGrace : 0f;
             bool wardReleaseWindow = duel.WindupSecondsLeft > releaseGrace &&
                 duel.WindupSecondsLeft <= WardCueSeconds;
             if (Debug.isDebugBuild) ReportInputs(!assumed && spellRay.HasValue);
             ArenaTarget activeWeakPoint = duel.Finished ? ArenaTarget.Miss : duel.WeakPoint;
             ArenaTarget shatteredPoint = duel.Finished ? ArenaTarget.Miss : duel.ShatteredPoint;
-            arena.Tick(deltaTime, duel.Windup, duel.Shield, duel.Phase == DuelPhase.Won, target,
+            arena.Tick(deltaTime, duel.Windup, wardBeforeContact && duel.WardVisible, duel.Phase == DuelPhase.Won, target,
                 duel.Stagger > 0, duel.Stuck > 0, duel.Enraged, activeWeakPoint, shatteredPoint,
                 duel.FocusProgress, duel.FocusReady, duel.HeavyStrike, wardReleaseWindow);
+            if (contact != AttackResult.None)
+                sfx.PlayMuseStrike(contact == AttackResult.Blocked, heavyContact,
+                    arena.WeakPointPosition(ArenaTarget.RaisedFist), Pinch);
             arena.SetCharge(chargedSpell, chargeLevel, chargeAnchor, view.transform.position, deltaTime);
             UpdateDrawingFeedback(deltaTime);
             music.Tick(duel.Phase == DuelPhase.Battle, duel.Phase == DuelPhase.Won, duel.Phase == DuelPhase.Lost,
@@ -290,7 +296,7 @@ namespace Runeveil
                 status = heading + "\nPoint your head at the button and pinch.";
             }
             ArenaTarget markedWeakPoint = duel.ExposedTarget.IsWeakPoint() ? duel.ExposedTarget : activeWeakPoint;
-            hud.Render(duel.BossHealth, duel.Hearts, duel.Shield, markedWeakPoint.DisplayName(), focus, spellLabel, status,
+            hud.Render(duel.BossHealth, duel.Hearts, duel.WardVisible, markedWeakPoint.DisplayName(), focus, spellLabel, status,
                 duel.Phase == DuelPhase.Practice, action, usingXr);
             hud.SetVictoryIllustration(arena.MuseVictoryPortraitBlend);
             hud.SetControlHint(!usingXr && !preview ? "Connect a headset to draw and aim" : null);
@@ -367,17 +373,23 @@ namespace Runeveil
 
         void AdvanceDuel(float deltaTime)
         {
-            int heartsBefore = duel.Hearts;
-            bool heavyStrike = duel.HeavyStrike;
-            var impact = duel.Step(deltaTime, MustWaitForLightning());
-            if (impact == AttackResult.None) return;
+            if (duel.Step(deltaTime, MustWaitForLightning()))
+                arena.BeginStrike(duel.HeavyStrike);
+        }
 
+        AttackResult ResolveMuseStrike(float deltaTime)
+        {
+            if (!duel.StrikeCommitted || !arena.ReachesStrikeContact(deltaTime)) return AttackResult.None;
+
+            int heartsBefore = duel.Hearts;
+            AttackResult impact = duel.ResolveStrike();
             bool blocked = impact == AttackResult.Blocked;
-            arena.Impact(blocked, heavyStrike);
+            arena.Impact(blocked);
             if (blocked) Notify("Ward blocked the strike. Counterattack now");
             else if (duel.Phase == DuelPhase.Lost) ShowResult("Defeated");
             else if (heartsBefore - duel.Hearts == 2) Notify("Heavy strike! You lost 2 hearts");
             else if (duel.Phase == DuelPhase.Battle) Notify("The Muse's strike hit you");
+            return impact;
         }
 
         bool MustWaitForLightning()
@@ -954,7 +966,8 @@ namespace Runeveil
                 hit = arena.BodyPoint(view.transform.position);
                 if (!aim.SpellRay.HasValue) RecordCast(spell, target.Part, "fallback-aim", aim.AssumedGaze);
             }
-            float travel = arena.Cast(spell.Value, point, hit, view.transform.position, view.transform.forward, level);
+            float travel = arena.Cast(spell.Value, point, hit, view.transform.position, view.transform.forward,
+                level, showWardPulse: duel.WardVisible);
             sfx.PlayCast(spell.Value, point, Pinch, level);
             sfx.PlayImpact(spell.Value, level, hit, travel, Pinch);
             if (duel.Finished) return;
