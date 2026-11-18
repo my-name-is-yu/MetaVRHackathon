@@ -39,6 +39,7 @@ namespace Runeveil
         readonly RuneveilPinchDetector leftPinch = new();
         readonly RuneveilPinchDetector rightPinch = new();
         RuneveilAudio sfx;
+        RuneveilMusic music;
         Vector3 lastDrawTip;
         bool hadDrawTip;
         readonly List<Vector2> samples = new(MaxSamples);
@@ -135,6 +136,8 @@ namespace Runeveil
             RuneveilPinchDetector.DebugRight = rightPinch;
             sfx = gameObject.AddComponent<RuneveilAudio>();
             sfx.Build();
+            music = gameObject.AddComponent<RuneveilMusic>();
+            music.Build();
             arena.Build();
             SelectCamera(HasXrDisplay());
         }
@@ -178,6 +181,8 @@ namespace Runeveil
                 aimed, duel.FocusProgress, duel.FocusReady);
             arena.SetCharge(chargedSpell, chargeLevel, chargeAnchor, view.transform.position, deltaTime);
             UpdateDrawingFeedback(deltaTime);
+            music.Tick(duel.Phase == DuelPhase.Battle, duel.Phase == DuelPhase.Won, duel.Phase == DuelPhase.Lost,
+                duel.Windup >= 0f, Pinch, Time.unscaledDeltaTime);
 
             string focus = target switch
             {
