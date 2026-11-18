@@ -41,7 +41,7 @@ namespace Runeveil
         private Transform boss;
         private Arm attackArm;
         private Arm anchorArm;
-        private Transform warningArcs;
+        private MeshRenderer warningArcs;
         private readonly Transform[] weakAnchors = new Transform[WeakPointCount];
         private readonly MeshRenderer[] weakGems = new MeshRenderer[WeakPointCount];
         private readonly MeshRenderer[] weakHalos = new MeshRenderer[WeakPointCount];
@@ -210,7 +210,8 @@ namespace Runeveil
         }
 
         public void Tick(float dt, float windup, bool shield, bool won, ArenaTarget aimed, bool staggered, bool stuck,
-            bool enraged, ArenaTarget weakPoint, ArenaTarget shattered, float focusProgress = 0f, bool focusReady = false)
+            bool enraged, ArenaTarget weakPoint, ArenaTarget shattered, float focusProgress = 0f, bool focusReady = false,
+            bool heavyStrike = false, bool wardReleaseWindow = false)
         {
             dt = Mathf.Clamp(dt, 0f, 0.05f);
             int weakIndex = weakPoint.WeakPointIndex();
@@ -249,7 +250,7 @@ namespace Runeveil
                 Mathf.Sin(age * 1.2f) * 0.019f - defeat * 0.59f - down * 0.30f - thrust * 0.10f, BossDepth);
             boss.localRotation = Quaternion.Euler(-6f * down, 1.45f * Mathf.Sin(age * 0.67f) - 9.7f * thrust,
                 2.8f + Mathf.Sin(age * 0.91f) * 0.86f + flinch * Mathf.Sin(age * 26f) * 1.9f - defeat * 7.5f - down * 3.5f);
-            PoseMuse(rising, thrust);
+            PoseMuse(rising, thrust, heavyStrike, wardReleaseWindow);
             int aimedIndex = aimed.WeakPointIndex();
             bool canFocus = activeWeak >= 0 && rising && CanFocus(aimed);
             focusReady &= canFocus;
@@ -1046,7 +1047,8 @@ namespace Runeveil
             }
         }
 
-        private static float LevelScale(int level) => 1f + 0.25f * (Mathf.Max(1, level) - 1);
+        private static float LevelScale(int level) =>
+            1f + (Mathf.Clamp(level, 1, RuneveilDuel.MaxChargeLevel) - 1f) / (RuneveilDuel.MaxChargeLevel - 1f);
 
         private static void ChargePalette(Spell spell, out Color halo, out Color core, out Color burst)
         {

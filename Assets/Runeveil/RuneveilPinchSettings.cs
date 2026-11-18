@@ -69,7 +69,7 @@ namespace Runeveil
         [Tooltip("Ward (horizontal line) waits longer, because Z also starts with a horizontal line.")]
         [Range(0f, 0.8f)] public float wardConfirmTime = 0.3f;
         [Tooltip("Highest power level from repeating the shape after charging.")]
-        [Range(1, 9)] public int maxChargeLevel = 5;
+        [Range(1, RuneveilDuel.MaxChargeLevel)] public int maxChargeLevel = RuneveilDuel.MaxChargeLevel;
 
         [Header("Sound effects")]
         [Range(0f, 1f)] public float sfxVolume = 0.8f;

@@ -11,51 +11,61 @@ namespace Runeveil
         public readonly ArenaTarget Part;
         public readonly ArenaTarget FocusedPart;
         public readonly int WeakPointRevision;
+        public readonly bool WardCounter;
 
-        public SpellTarget(ArenaTarget part, ArenaTarget focusedPart, int weakPointRevision)
+        public SpellTarget(ArenaTarget part, ArenaTarget focusedPart, int weakPointRevision, bool wardCounter = false)
         {
             Part = part;
             FocusedPart = focusedPart;
             WeakPointRevision = weakPointRevision;
+            WardCounter = wardCounter;
         }
     }
 
     internal sealed class RuneveilDuel
     {
         public const int MaxBossHealth = 120;
+        public const int MaxHearts = 5;
+        public const int MaxChargeLevel = 3;
         public const float FocusSeconds = 0.35f;
         public const int ExposedCoreMultiplier = 2;
-        public const float ShieldSeconds = 1f;
+        public const float ShieldSeconds = 1.5f;
         const float IdleSeconds = 2f;
         const float WindupSeconds = 2.4f;
         const float EnragedIdleSeconds = 1.5f;
-        const float EnragedWindupSeconds = 1.8f;
         const float StaggerSeconds = 3f;
-        const float StuckSeconds = 1.5f;
+        const float StuckSeconds = 2.2f;
         const float WeakPointGapSeconds = 0.8f;
-        const float BodyDamageRate = 0.5f;
+        const float BodyDamageRate = 0.55f;
         const int FocusBonus = 8;
+        const int ChargeBonusPerLevel = 6;
         readonly float[] cooldowns = new float[(int)Spell.Barrier + 1];
         readonly System.Random random = new();
         float attackIn = IdleSeconds;
         float focusedSeconds;
         float shieldLeft;
+        bool? shieldAtStrike;
         float weakGapLeft;
+        ArenaTarget weakPoint = ArenaTarget.Core;
         ArenaTarget nextWeakPoint;
         ArenaTarget focusedPart;
         int weakPointRevision;
 
         public DuelPhase Phase { get; private set; } = DuelPhase.Practice;
         public int BossHealth { get; private set; } = MaxBossHealth;
-        public int Hearts { get; private set; } = 3;
+        public int Hearts { get; private set; } = MaxHearts;
         public bool Shield { get; private set; }
         public float Windup { get; private set; } = -1;
+        public float WindupSecondsLeft => Windup >= 0 ? Mathf.Max(0, attackIn + WindupSeconds) : -1f;
+        public int WindupRevision { get; private set; }
+        public bool HeavyStrike { get; private set; }
         /// <summary>雷で拳を止められたボスが膝をついている残り秒数。</summary>
         public float Stagger { get; private set; }
         /// <summary>バリアに防がれた拳が地面に刺さっている残り秒数。</summary>
         public float Stuck { get; private set; }
+        public bool WardCounterActive { get; private set; }
         /// <summary>推奨する弱点。結晶が割れてから次が現れるまでは Miss。</summary>
-        public ArenaTarget WeakPoint { get; private set; } = ArenaTarget.Core;
+        public ArenaTarget WeakPoint => WardCounterActive ? ArenaTarget.RaisedFist : weakPoint;
         public ArenaTarget ShatteredPoint { get; private set; }
         public ArenaTarget ExposedTarget => FocusReady ? focusedPart : ArenaTarget.Miss;
         public int Interruptions { get; private set; }
@@ -80,12 +90,13 @@ namespace Runeveil
         {
             Phase = DuelPhase.Battle;
             BossHealth = MaxBossHealth;
-            Hearts = 3;
+            Hearts = MaxHearts;
             Shield = false;
             shieldLeft = 0;
             Stagger = 0;
             Stuck = 0;
-            WeakPoint = ArenaTarget.Core;
+            WardCounterActive = false;
+            weakPoint = ArenaTarget.Core;
             ShatteredPoint = ArenaTarget.Miss;
             weakPointRevision++;
             weakGapLeft = 0;
@@ -95,14 +106,14 @@ namespace Runeveil
             Recover();
         }
 
-        public AttackResult Step(float deltaTime)
+        public AttackResult Step(float deltaTime, bool deferStrike = false)
         {
             if (Finished) return AttackResult.None;
 
             for (int i = 0; i < cooldowns.Length; i++)
                 cooldowns[i] = Mathf.Max(0, cooldowns[i] - deltaTime);
             if (Shield && (shieldLeft -= deltaTime) <= 0) Shield = false;
-            if (weakGapLeft > 0 && (weakGapLeft -= deltaTime) <= 0) WeakPoint = nextWeakPoint;
+            if (weakGapLeft > 0 && (weakGapLeft -= deltaTime) <= 0) weakPoint = nextWeakPoint;
 
             // ダウン中と拳の硬直中は次の攻撃までの時間を進めない
             if (Stagger > 0)
@@ -113,22 +124,45 @@ namespace Runeveil
             if (Stuck > 0)
             {
                 Stuck = Mathf.Max(0, Stuck - deltaTime);
+                if (Stuck == 0 && WardCounterActive)
+                {
+                    WardCounterActive = false;
+                    weakPointRevision++;
+                }
                 return AttackResult.None;
             }
 
             attackIn -= deltaTime;
             if (attackIn > 0) return AttackResult.None;
 
-            Windup = Mathf.Min(1, -attackIn / (Enraged ? EnragedWindupSeconds : WindupSeconds));
-            if (Windup < 1) return AttackResult.None;
+            if (Windup < 0)
+            {
+                WindupRevision++;
+                HeavyStrike = Enraged;
+            }
 
-            var blocked = Shield;
+            Windup = Mathf.Min(1, -attackIn / WindupSeconds);
+            if (Windup < 1) return AttackResult.None;
+            if (deferStrike)
+            {
+                shieldAtStrike ??= Shield;
+                attackIn = -WindupSeconds;
+                return AttackResult.None;
+            }
+
+            var blocked = shieldAtStrike ?? Shield;
             if (blocked)
             {
                 Blocks++;
                 Stuck = StuckSeconds;
+                WardCounterActive = true;
+                weakPointRevision++;
             }
-            else if (Phase == DuelPhase.Battle && --Hearts == 0) Phase = DuelPhase.Lost;
+            else if (Phase == DuelPhase.Battle)
+            {
+                Hearts = Mathf.Max(0, Hearts - (HeavyStrike ? 2 : 1));
+                if (Hearts == 0) Phase = DuelPhase.Lost;
+            }
 
             Shield = false;
             Recover();
@@ -155,8 +189,13 @@ namespace Runeveil
             ArenaTarget focus = part.IsWeakPoint() && part == ExposedTarget ? part : ArenaTarget.Miss;
             if (part.IsWeakPoint() && part != WeakPoint && focus == ArenaTarget.Miss)
                 part = ArenaTarget.Body;
-            return new SpellTarget(part, focus, weakPointRevision);
+            return new SpellTarget(part, focus, weakPointRevision, WardCounterActive && part == ArenaTarget.RaisedFist);
         }
+
+        public ArenaTarget DamageTarget(SpellTarget target) =>
+            target.WardCounter && (!WardCounterActive || target.WeakPointRevision != weakPointRevision)
+                ? ArenaTarget.Body
+                : target.Part;
 
         /// <summary>
         /// 指を離した瞬間に呼ぶ。クールタイム中なら false を返して何もしない。
@@ -178,12 +217,12 @@ namespace Runeveil
         /// <summary>
         /// 攻撃魔法が着弾したときに呼び、ダメージと拳の中断を決める。
         /// <paramref name="target"/> は指を離した瞬間に決まった部位と露呈状態。
-        /// <paramref name="level"/> は溜めのレベルで、Lv1 が通常、1つ上がるごとにダメージが50%増える。
+        /// <paramref name="level"/> は溜めのレベルで、倍率の計算後にLv2で6、Lv3で12を加える。胴体では加算分も減る。
         /// </summary>
         public CastResult Hit(Spell spell, SpellTarget target, int level = 1)
         {
             if (Finished || spell == Spell.Barrier) return CastResult.None;
-            level = Mathf.Max(1, level);
+            int chargeBonus = spell == Spell.Rock ? 0 : (Mathf.Clamp(level, 1, MaxChargeLevel) - 1) * ChargeBonusPerLevel;
             if (target.Part == ArenaTarget.Miss) return CastResult.Miss;
 
             int damage = spell switch
@@ -198,7 +237,7 @@ namespace Runeveil
             if (damage == 0) return CastResult.None;
 
             // 拳を止めた一撃自体には倍率をかけず、ダウン中の追撃だけを倍にする
-            bool weak = target.Part.IsWeakPoint();
+            bool weak = DamageTarget(target).IsWeakPoint();
             bool exposed = Stagger > 0 && weak;
             bool focused = weak && target.FocusedPart == target.Part;
             bool interrupted = spell == Spell.Lightning && weak && Windup >= 0f;
@@ -209,15 +248,17 @@ namespace Runeveil
                 Recover();
             }
             // An earlier projectile may already have shattered this set of weak points.
-            if (weak && target.WeakPointRevision == weakPointRevision && WeakPoint.IsWeakPoint())
+            if (weak && target.WeakPointRevision == weakPointRevision && WeakPoint.IsWeakPoint() &&
+                (!WardCounterActive || target.Part == ArenaTarget.RaisedFist))
                 BreakWeakPoint(target.Part);
 
             if (Phase == DuelPhase.Battle)
             {
                 // 弱点以外への命中は、狙えていなくても通る代わりに威力を減らす
-                float total = weak ? damage + 4 + (focused ? FocusBonus : 0) : damage * BodyDamageRate;
-                total *= 1f + 0.5f * (level - 1);
-                if (exposed) total *= ExposedCoreMultiplier;
+                int weakDamage = damage + 4 + (focused ? FocusBonus : 0);
+                float total = weak
+                    ? weakDamage * (exposed ? ExposedCoreMultiplier : 1) + chargeBonus
+                    : (damage + chargeBonus) * BodyDamageRate;
                 BossHealth = Mathf.Max(0, BossHealth - Mathf.RoundToInt(total));
                 if (BossHealth == 0)
                 {
@@ -225,6 +266,7 @@ namespace Runeveil
                     Shield = false;
                     Stagger = 0;
                     Stuck = 0;
+                    WardCounterActive = false;
                     Recover();
                 }
             }
@@ -245,7 +287,8 @@ namespace Runeveil
             if (last != first && pick >= last) pick++;
             nextWeakPoint = (ArenaTarget)((int)ArenaTarget.Core + pick);
             ShatteredPoint = part;
-            WeakPoint = ArenaTarget.Miss;
+            WardCounterActive = false;
+            weakPoint = ArenaTarget.Miss;
             weakPointRevision++;
             weakGapLeft = WeakPointGapSeconds;
             ClearFocus();
@@ -254,7 +297,9 @@ namespace Runeveil
         void Recover()
         {
             attackIn = Enraged ? EnragedIdleSeconds : IdleSeconds;
+            shieldAtStrike = null;
             Windup = -1;
+            HeavyStrike = false;
             ClearFocus();
         }
 

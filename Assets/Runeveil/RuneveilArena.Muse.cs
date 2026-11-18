@@ -77,13 +77,13 @@ namespace Runeveil
             AddWeakGem(ArenaTarget.RaisedFist, attackArm.Fist, "Raised fist crystal", new Vector3(0f, 0.02f, -0.47f));
             BuildThornWind(arenaShader);
 
-            var warning = new Geometry("Amber arc on Muse's raised paw");
+            var warning = new Geometry("Warning arcs on Muse's raised paw");
             warning.Tube(Arc(Vector3.zero, 0.53f, 0.55f, 105f, 246f, 23), 0.018f, 0xffb767);
             warning.Tube(Arc(Vector3.back * 0.022f, 0.62f, 0.64f, 113f, 254f, 24), 0.009f, 0xffebac);
-            warningArcs = Render(boss, warning, glow).transform;
+            warningArcs = Render(boss, warning, glow);
         }
 
-        private void PoseMuse(bool rising, float thrust)
+        private void PoseMuse(bool rising, float thrust, bool heavyStrike, bool wardReleaseWindow)
         {
             // ダウン中は倒れたときと同じ向きに腕を落とす（倒れたときほどは落とさない）
             float sag = defeat + down * 0.6f;
@@ -96,9 +96,16 @@ namespace Runeveil
                 new Vector3(-1.34f - lift * 0.04f, 1.19f + lift * 0.08f + sag * 0.15f, -0.61f - lift * 0.06f),
                 new Vector3(0f + 6f * lift, 11f - 16f * sag, -12f));
 
-            warningArcs.gameObject.SetActive(rising && defeat < 0.13f);
-            warningArcs.localPosition = attackArm.Fist.localPosition + Vector3.back * 0.30f;
-            warningArcs.localRotation = Quaternion.Euler(0f, 10f, 17f + 24f * lift);
+            bool showWarning = rising && defeat < 0.13f;
+            warningArcs.gameObject.SetActive(showWarning);
+            if (showWarning)
+            {
+                Transform arcs = warningArcs.transform;
+                arcs.localPosition = attackArm.Fist.localPosition + Vector3.back * 0.30f;
+                arcs.localRotation = Quaternion.Euler(0f, 10f, 17f + 24f * lift);
+                Color strikeColor = heavyStrike ? Rgb(0xff3932) : Color.white;
+                Tint(warningArcs, strikeColor * (wardReleaseWindow ? 1.65f : 1f), 1f);
+            }
             // 怒り状態では棘の帯を赤く染め、大きく揺らす
             thornWind.localRotation = Quaternion.Euler(0f, (11f + 10f * rage) * Mathf.Sin(age * 0.72f) + lift * 13f,
                 (2f + 3f * rage) * Mathf.Sin(age));

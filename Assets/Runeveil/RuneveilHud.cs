@@ -43,7 +43,7 @@ namespace Runeveil
         private RectTransform bossFill;
         private Text guideControls;
         private Text wardText;
-        private readonly Text[] hearts = new Text[3];
+        private readonly Text[] hearts = new Text[RuneveilDuel.MaxHearts];
         private Text focusText;
         private Text spellText;
         private Text noticeText;

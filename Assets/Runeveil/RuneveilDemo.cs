@@ -23,6 +23,7 @@ namespace Runeveil
         static readonly Color ChargedWardColor = new Color32(159, 242, 206, 255);
         static readonly Color HandLabelColor = new Color32(159, 242, 206, 255);
         const float ChargeCheckInterval = 0.05f;
+        const float WardCueSeconds = 1.3f;
 
         [SerializeField] Camera desktopView;
         [SerializeField] OVRCameraRig xrRig;
@@ -47,6 +48,7 @@ namespace Runeveil
             public float Delay;
             public bool AssumedGaze;
             public int Level;
+            public int? InterruptWindup;
         }
 
         readonly RuneveilDuel duel = new();
@@ -92,6 +94,8 @@ namespace Runeveil
         Vector3 chargeAnchor;
         float nextChargeCheck;
         AimSample pendingReleaseAim;
+        int? lightningReleaseWindup;
+        double lightningReleaseDeadline;
         int focusLocks;
 
         readonly struct AimSample
@@ -101,14 +105,17 @@ namespace Runeveil
             public readonly SpellTarget Target;
             public readonly Vector3 Hit;
             public readonly bool AssumedGaze;
+            public readonly int? Windup;
 
-            public AimSample(Ray? spellRay, Ray? menuActionRay, SpellTarget target, Vector3 hit, bool assumedGaze)
+            public AimSample(Ray? spellRay, Ray? menuActionRay, SpellTarget target, Vector3 hit, bool assumedGaze,
+                int? windup)
             {
                 SpellRay = spellRay;
                 MenuActionRay = menuActionRay;
                 Target = target;
                 Hit = hit;
                 AssumedGaze = assumedGaze;
+                Windup = windup;
             }
         }
 
@@ -188,10 +195,13 @@ namespace Runeveil
             float deltaTime = Mathf.Min(Time.deltaTime, 0.1f);
             bool preview = !usingXr && DesktopPreviewEnabled;
             bool active = usingXr ? OVRManager.hasInputFocus : preview && Application.isFocused;
+            bool advance = active && !arena.HitStopping;
+            float strikeIn = duel.WindupSecondsLeft;
+            bool closingWindup = advance && strikeIn > 0f && strikeIn <= deltaTime;
             // ヒットストップ中は拳の溜めやクールタイムも止め、ボスの見た目とずれないようにする
-            if (active && !arena.HitStopping) AdvanceDuel(deltaTime);
+            if (advance && !closingWindup) AdvanceDuel(deltaTime);
             LandHits(deltaTime);
-            if (duel.Enraged && !wasEnraged) Notify("The Muse is enraged! Her strikes come faster");
+            if (duel.Enraged && !wasEnraged) Notify("The Muse is enraged! Red strikes cost 2 hearts");
             wasEnraged = duel.Enraged;
             bool assumed = AssumeGaze;
             if (assumed != wasAssumingGaze)
@@ -199,6 +209,7 @@ namespace Runeveil
                 wasAssumingGaze = assumed;
                 duel.TrackFocus(ArenaTarget.Miss, 0f);
                 pendingReleaseAim = default;
+                lightningReleaseWindup = null;
                 ResetEyeEvidence();
             }
 
@@ -233,7 +244,8 @@ namespace Runeveil
             bool wasFocused = duel.FocusReady;
             duel.TrackFocus(arena.CanFocus(target) ? target : ArenaTarget.Miss, deltaTime);
             if (Debug.isDebugBuild && usingXr && !assumed && !wasFocused && duel.FocusReady) focusLocks++;
-            var aim = new AimSample(spellRay, menuActionRay, duel.CaptureTarget(target), hit, assumed);
+            int? windup = duel.WindupSecondsLeft > 0f ? duel.WindupRevision : null;
+            var aim = new AimSample(spellRay, menuActionRay, duel.CaptureTarget(target), hit, assumed, windup);
 
             if (usingXr) UpdateHands(aim);
             else if (preview) UpdateMouse(aim);
@@ -242,10 +254,18 @@ namespace Runeveil
                 ClearStroke();
                 pendingDesktopAction = locked = false;
             }
+            // Read this frame's release before a punch that crosses its deadline this frame.
+            if (closingWindup && !duel.Finished)
+                AdvanceDuel(deltaTime);
+            else if (advance && duel.WindupSecondsLeft == 0f)
+                AdvanceDuel(0f);
+            float releaseGrace = usingXr ? Pinch.releaseGrace : 0f;
+            bool wardReleaseWindow = duel.WindupSecondsLeft > releaseGrace &&
+                duel.WindupSecondsLeft <= WardCueSeconds;
             if (Debug.isDebugBuild) ReportInputs(!assumed && spellRay.HasValue);
             arena.Tick(deltaTime, duel.Windup, duel.Shield, duel.Phase == DuelPhase.Won, target,
                 duel.Stagger > 0, duel.Stuck > 0, duel.Enraged, duel.WeakPoint, duel.ShatteredPoint,
-                duel.FocusProgress, duel.FocusReady);
+                duel.FocusProgress, duel.FocusReady, duel.HeavyStrike, wardReleaseWindow);
             arena.SetCharge(chargedSpell, chargeLevel, chargeAnchor, view.transform.position, deltaTime);
             UpdateDrawingFeedback(deltaTime);
             music.Tick(duel.Phase == DuelPhase.Battle, duel.Phase == DuelPhase.Won, duel.Phase == DuelPhase.Lost,
@@ -261,11 +281,12 @@ namespace Runeveil
             };
             if (assumed) focus = $"Debug gaze · {focus}";
             string action = MenuAction;
-            string status = Time.unscaledTime < noticeUntil
-                ? notice
-                : headMenuAim && action.Length != 0
-                    ? "HEAD AIM · MENU ONLY\nPoint your head at the button and pinch."
-                    : DefaultStatus();
+            string status = Time.unscaledTime < noticeUntil ? notice : DefaultStatus(spellRay.HasValue);
+            if (headMenuAim)
+            {
+                string heading = duel.Finished ? resultSummary : "HEAD AIM · MENU ONLY";
+                status = heading + "\nPoint your head at the button and pinch.";
+            }
             hud.Render(duel.BossHealth, duel.Hearts, duel.Shield, focus, spellLabel, status,
                 duel.Phase == DuelPhase.Practice, action, usingXr);
             hud.SetVictoryIllustration(duel.Phase == DuelPhase.Won, Time.unscaledDeltaTime);
@@ -343,34 +364,52 @@ namespace Runeveil
 
         void AdvanceDuel(float deltaTime)
         {
-            var impact = duel.Step(deltaTime);
+            int heartsBefore = duel.Hearts;
+            var impact = duel.Step(deltaTime, MustWaitForLightning());
             if (impact == AttackResult.None) return;
 
             bool blocked = impact == AttackResult.Blocked;
             arena.Impact(blocked);
-            if (blocked) Notify("Your ward blocked the strike. The paw is stuck");
+            if (blocked) Notify("Ward blocked the strike. Counterattack now");
             else if (duel.Phase == DuelPhase.Lost) ShowResult("Defeated");
+            else if (heartsBefore - duel.Hearts == 2) Notify("Heavy strike! You lost 2 hearts");
             else if (duel.Phase == DuelPhase.Battle) Notify("The Muse's strike hit you");
         }
 
-        string DefaultStatus()
+        bool MustWaitForLightning()
+        {
+            if (duel.Windup < 0f) return false;
+            int windup = duel.WindupRevision;
+            // Allow the frame that completes the grace period to deliver its release.
+            if (lightningReleaseWindup == windup &&
+                Time.unscaledTimeAsDouble - Time.unscaledDeltaTime < lightningReleaseDeadline)
+                return true;
+            foreach (var hit in pendingHits)
+                if (hit.InterruptWindup == windup) return true;
+            return false;
+        }
+
+        string DefaultStatus(bool canAim)
         {
             if (!usingXr && !DesktopPreviewEnabled) return "";
             if (duel.Finished) return resultSummary;
-            if (usingXr && !string.IsNullOrEmpty(gazeHint)) return gazeHint;
+            if (usingXr && duel.Phase != DuelPhase.Battle && !string.IsNullOrEmpty(gazeHint)) return gazeHint;
             if (usingXr && !handPosition.HasValue) return "Bring a hand into view, then pinch";
-            if (duel.Stagger > 0) return $"The Muse is down! Weak point damage x{RuneveilDuel.ExposedCoreMultiplier}";
-            if (duel.Stuck > 0) return "Her paw is stuck. Counterattack now";
+            if (duel.Stagger > 0) return "The Muse is down! Strike the glowing weak point";
+            if (duel.WardCounterActive)
+                return canAim ? "Counterattack the glowing paw" : "Cast while the paw is stuck";
             if (duel.FocusReady) return "Release an attack rune at the exposed part";
             if (duel.Windup >= 0)
-                return "Focus on the chest, a horn or a hand. Hit a weak point with Lightning to stop the strike";
+                return canAim ? "Release Ward when the arcs flare, or hit a weak point with Lightning"
+                    : "Draw Ward now. Release when the arcs flare";
             if (chargedSpell.HasValue && !drawing)
                 return chargedSpell == Spell.Barrier
                     ? (usingXr ? "Ward charged — pinch and release to raise it" : "Ward charged — click to raise it")
                     : $"{ChargeName(chargedSpell.Value)} charged — " +
                       (usingXr ? "look at a target, pinch and release" : "click to cast");
             if (duel.Phase == DuelPhase.Battle)
-                return duel.WeakPoint == ArenaTarget.Miss
+                return !canAim && usingXr ? "Spells hit the body. Draw Ward when the Muse raises her paw"
+                    : duel.WeakPoint == ArenaTarget.Miss
                     ? "The weak point shattered. Watch for the next glow"
                     : $"Aim for the glowing {duel.WeakPoint.DisplayName().ToLowerInvariant()}";
             return "";
@@ -379,6 +418,11 @@ namespace Runeveil
         void ShowResult(string outcome)
         {
             noticeUntil = 0;
+            if (duel.Phase == DuelPhase.Won)
+            {
+                string rank = duel.Hearts == RuneveilDuel.MaxHearts ? "S" : duel.Hearts >= 3 ? "A" : "B";
+                outcome += $"  |  Rank {rank}";
+            }
             resultSummary = $"{outcome}  |  Interrupts {duel.Interruptions}  |  Blocks {duel.Blocks}";
         }
 
@@ -572,8 +616,15 @@ namespace Runeveil
                 {
                     pendingReleasePoint = tip;
                     pendingReleaseAim = aim;
+                    if (pinch.InGrace && aim.Windup.HasValue && aim.Target.Part.IsWeakPoint() &&
+                        duel.CooldownLeft(Spell.Lightning) <= 0f && PreviewReleaseSpell(tip) == Spell.Lightning)
+                    {
+                        lightningReleaseWindup = aim.Windup;
+                        lightningReleaseDeadline = Time.unscaledTimeAsDouble + settings.releaseGrace;
+                    }
                 }
                 if (pinch.InGrace) return;
+                lightningReleaseWindup = null;
                 if (pinching) Sample(tip);
                 else Release(pendingReleasePoint, pendingReleaseAim);
             }
@@ -765,6 +816,7 @@ namespace Runeveil
             float elapsed = nextChargeCheck <= 0f ? 0f : ChargeCheckInterval;
             nextChargeCheck = Time.unscaledTime + ChargeCheckInterval;
             var settings = Pinch;
+            int maxChargeLevel = Mathf.Clamp(settings.maxChargeLevel, 1, RuneveilDuel.MaxChargeLevel);
 
             Spell? match = null;
             bool levelUp = false;
@@ -782,7 +834,7 @@ namespace Runeveil
                     var whole = ClassifyChargeable(samples);
                     if (whole.HasValue && whole != chargedSpell) match = whole;
                 }
-                if (!match.HasValue && chargeLevel < settings.maxChargeLevel &&
+                if (!match.HasValue && chargedSpell != Spell.Barrier && chargeLevel < maxChargeLevel &&
                     RepeatsSince(chargeSegmentStart, chargedSpell.Value))
                 {
                     match = chargedSpell;
@@ -817,11 +869,35 @@ namespace Runeveil
             sfx.PlayCharge(match.Value, chargeLevel, chargeAnchor, settings);
             string name = ChargeName(match.Value);
             if (levelUp)
-                Notify(chargeLevel >= settings.maxChargeLevel ? $"{name} Lv{chargeLevel} — MAX POWER!" : $"{name} Lv{chargeLevel}!");
+                Notify(chargeLevel >= maxChargeLevel ? $"{name} Lv{chargeLevel} — MAX POWER!" : $"{name} Lv{chargeLevel}!");
             else
                 Notify(match == Spell.Barrier
                     ? "Ward charged! Release to raise it"
                     : usingXr ? $"{name} charged! Look at a target and release" : $"{name} charged! Release to cast");
+        }
+
+        Spell? RecognizeStroke() => RuneRecognizer.MatchRune(samples) ?? (LooksLikeFire(null) ? Spell.Fire : (Spell?)null);
+
+        Spell? SpellToRelease(Spell? recognized)
+        {
+            // A finished Z can resolve the earlier horizontal Ward prefix at release.
+            if (chargedThisStroke && !(chargedSpell == Spell.Barrier && recognized == Spell.Lightning))
+                return chargedSpell;
+            return recognized ?? chargedSpell;
+        }
+
+        Spell? PreviewReleaseSpell(Vector3 point)
+        {
+            if ((point - points[points.Count - 1]).sqrMagnitude < MinimumSampleDistanceSquared)
+                return SpellToRelease(RecognizeStroke());
+            if (samples.Count == MaxSamples) return null;
+
+            // Include the same fingertip sample as Release without modifying the live stroke.
+            Vector3 offset = point - origin;
+            samples.Add(new Vector2(Vector3.Dot(offset, strokeRight), Vector3.Dot(offset, strokeUp)));
+            var spell = SpellToRelease(RecognizeStroke());
+            samples.RemoveAt(samples.Count - 1);
+            return spell;
         }
 
         void Release(Vector3 point, AimSample aim)
@@ -832,8 +908,7 @@ namespace Runeveil
             drawing = false;
             strokeHand = null;
             strokeFadeUntil = Time.unscaledTime + 0.28f;
-            var recognized = RuneRecognizer.MatchRune(samples);
-            if (!recognized.HasValue && LooksLikeFire(null)) recognized = Spell.Fire;
+            var recognized = RecognizeStroke();
             var settings = Pinch;
             bool shortPinch = usingXr && Time.unscaledTime - strokeStarted <= settings.tapMaxDuration &&
                 maxDisplacementSquared <= settings.tapMaxMovement * settings.tapMaxMovement;
@@ -845,11 +920,8 @@ namespace Runeveil
                 StartBattle();
                 return;
             }
-            // A held charge is spent only when it is actually cast; otherwise it is kept.
-            // A charge made during this stroke is what gets cast. A charge held from an earlier stroke is
-            // kept if this stroke draws a different rune, and cast otherwise.
-            var spell = chargedThisStroke ? chargedSpell
-                : recognized.HasValue && recognized != chargedSpell ? recognized : chargedSpell ?? recognized;
+            var spell = SpellToRelease(recognized);
+            bool replaceWardPrefix = chargedThisStroke && chargedSpell == Spell.Barrier && spell == Spell.Lightning;
             chargedThisStroke = false;
             bool releasingCharge = chargedSpell.HasValue && spell == chargedSpell;
             if (duel.Finished && !releasingCharge) return;
@@ -868,7 +940,7 @@ namespace Runeveil
                 return;
             }
             int level = releasingCharge ? Mathf.Max(1, chargeLevel) : 1;
-            if (releasingCharge) ClearCharge();
+            if (releasingCharge || replaceWardPrefix) ClearCharge();
 
             SpellTarget target = aim.Target;
             Vector3 hit = spell == Spell.Barrier ? point : aim.Hit;
@@ -895,7 +967,8 @@ namespace Runeveil
                 Target = target,
                 Delay = travel,
                 AssumedGaze = aim.AssumedGaze,
-                Level = level
+                Level = level,
+                InterruptWindup = spell == Spell.Lightning && target.Part.IsWeakPoint() ? aim.Windup : null
             });
         }
 
@@ -915,10 +988,10 @@ namespace Runeveil
                 }
 
                 pendingHits.RemoveAt(i);
+                ArenaTarget part = duel.DamageTarget(pending.Target);
                 var result = duel.Hit(pending.Spell, pending.Target, pending.Level);
                 if (result == CastResult.None) continue;
 
-                ArenaTarget part = pending.Target.Part;
                 RecordCast(pending.Spell, part, result.ToString(), pending.AssumedGaze);
                 bool won = duel.Phase == DuelPhase.Won;
                 arena.Hit(pending.Spell, part,
@@ -929,7 +1002,7 @@ namespace Runeveil
                 else Notify(result switch
                 {
                     CastResult.Interrupt => power + "Lightning stopped her strike. The Muse is down",
-                    CastResult.Exposed => power + $"Exposed weak point! x{RuneveilDuel.ExposedCoreMultiplier} damage",
+                    CastResult.Exposed => power + "Exposed weak point hit!",
                     CastResult.FocusHit => power + $"{part.DisplayName()} hit! Extra focus damage",
                     CastResult.Miss => "The spell missed",
                     _ => power + (part.IsWeakPoint()
@@ -1017,6 +1090,7 @@ namespace Runeveil
 
         void ClearStroke()
         {
+            lightningReleaseWindup = null;
             chargeMatchedFor = 0f;
             pendingKey = -1;
             chargedThisStroke = false;
