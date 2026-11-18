@@ -15,6 +15,10 @@ namespace Runeveil
         const double MaxEyeSampleAge = 0.2;
         const float IndependentEyeAngle = 1.5f;
         static readonly Color DrawingColor = new Color32(255, 218, 139, 255);
+        static readonly Color ChargedFireColor = new Color32(255, 128, 66, 255);
+        static readonly Color HandLabelColor = new Color32(159, 242, 206, 255);
+        const float ChargeCheckInterval = 0.05f;
+        const int ChargeConfirmations = 2;
 
         [SerializeField] Camera desktopView;
         [SerializeField] OVRCameraRig xrRig;
@@ -31,6 +35,9 @@ namespace Runeveil
         readonly RuneveilDuel duel = new();
         readonly RuneveilPinchDetector leftPinch = new();
         readonly RuneveilPinchDetector rightPinch = new();
+        RuneveilAudio sfx;
+        Vector3 lastDrawTip;
+        bool hadDrawTip;
         readonly List<Vector2> samples = new(MaxSamples);
         readonly List<Vector3> points = new(MaxSamples);
         readonly List<XRDisplaySubsystem> displays = new();
@@ -60,6 +67,11 @@ namespace Runeveil
         Vector3 strokeUp;
         Vector3? handPosition;
         Vector3 pendingReleasePoint;
+        Spell? chargedSpell;
+        OVRHand chargeHand;
+        Vector3 chargeAnchor;
+        float nextChargeCheck;
+        int chargeMatches;
         AimSample pendingReleaseAim;
         int focusLocks;
 
@@ -94,6 +106,8 @@ namespace Runeveil
             rightSkeleton = rightHand.GetComponent<OVRSkeleton>();
             RuneveilPinchDetector.DebugLeft = leftPinch;
             RuneveilPinchDetector.DebugRight = rightPinch;
+            sfx = gameObject.AddComponent<RuneveilAudio>();
+            sfx.Build();
             arena.Build();
             SelectCamera(HasXrDisplay());
         }
@@ -131,6 +145,8 @@ namespace Runeveil
             if (Debug.isDebugBuild) ReportInputs(ray.HasValue);
             arena.Tick(deltaTime, duel.Windup, duel.Shield, duel.Phase == DuelPhase.Won,
                 onCore, duel.FocusProgress, duel.FocusReady);
+            arena.SetCharge(chargedSpell, chargeAnchor, view.transform.position, deltaTime);
+            UpdateDrawingFeedback(deltaTime);
 
             string focus = target switch
             {
@@ -153,7 +169,7 @@ namespace Runeveil
             hud.SetActionFocus(usingXr ? ray : mousePointer);
             hud.SetHand(handPosition);
             hud.SetPinchMeter(usingXr && Pinch.showDebugMeter, leftPinch, rightPinch, Pinch);
-            if (drawing) hud.ShowStroke(points, DrawingColor);
+            if (drawing) hud.ShowStroke(points, chargedSpell == Spell.Fire ? ChargedFireColor : DrawingColor);
             else if (strokeFadeUntil > 0)
             {
                 float opacity = Mathf.Clamp01((strokeFadeUntil - Time.unscaledTime) / 0.28f);
@@ -172,6 +188,21 @@ namespace Runeveil
                 return false;
 #endif
             }
+        }
+
+        // Drawing crackle and sparks follow the fingertip; both scale with its speed.
+        void UpdateDrawingFeedback(float deltaTime)
+        {
+            bool active = drawing && points.Count > 0;
+            Vector3 tip = active ? points[points.Count - 1] : lastDrawTip;
+            float speed = active && hadDrawTip && deltaTime > 0f ? (tip - lastDrawTip).magnitude / deltaTime : 0f;
+            lastDrawTip = tip;
+            hadDrawTip = active;
+
+            var settings = Pinch;
+            sfx.SetDrawing(active, tip, speed, settings, deltaTime);
+            arena.TickSparks(active && settings.sparks, tip, speed, chargedSpell == Spell.Fire,
+                settings.sparkAmount, view.transform.position, deltaTime);
         }
 
         bool HasXrDisplay()
@@ -223,6 +254,8 @@ namespace Runeveil
             if (usingXr && !string.IsNullOrEmpty(gazeHint)) return gazeHint;
             if (usingXr && !handPosition.HasValue) return "Bring a hand into view, then pinch";
             if (duel.FocusReady) return "Core exposed! Release an attack rune at the crystal";
+            if (chargedSpell == Spell.Fire && !drawing)
+                return usingXr ? "Fire charged — look at a target, pinch and release" : "Fire charged — click to cast";
             if (duel.Windup >= 0) return "Hold your gaze on the crystal, interrupt with Lightning, or draw a Ward";
             if (duel.Phase == DuelPhase.Battle) return "Aim for the crystal core";
             return "";
@@ -393,6 +426,8 @@ namespace Runeveil
             }
 
             pinch.LostTime = 0f;
+            // The charge stays on the hand that made it, even between strokes.
+            if (chargedSpell.HasValue && (chargeHand == hand || chargeHand == null)) chargeAnchor = tip;
             if (!handPosition.HasValue || strokeHand == hand) handPosition = tip;
             float distance = hasThumb ? Vector3.Distance(tip, thumb) : float.PositiveInfinity;
             pinch.Update(hand.GetFingerPinchStrength(OVRHand.HandFinger.Index), distance,
@@ -494,6 +529,7 @@ namespace Runeveil
                 view.transform.forward * DrawingDepth);
             if (!drawingPlane.Raycast(cursorRay, out float distance)) return;
             Vector3 point = cursorRay.GetPoint(distance);
+            if (chargedSpell.HasValue && inside) chargeAnchor = point;
 
             if (mouse.leftButton.wasPressedThisFrame && inside)
             {
@@ -521,6 +557,28 @@ namespace Runeveil
             strokeUp = view.transform.up;
             samples.Add(Vector2.zero);
             points.Add(point);
+            if (chargedSpell.HasValue)
+            {
+                chargeHand = hand;
+                chargeAnchor = point;
+            }
+            RefreshHandLabel();
+            sfx.PlayTouch(point, Pinch);
+        }
+
+        void RefreshHandLabel()
+        {
+            if (chargedSpell == Spell.Fire) hud.SetHandLabel("FIRE READY", ChargedFireColor);
+            else hud.SetHandLabel("Drawing rune", HandLabelColor);
+        }
+
+        bool LooksLikeFire(Spell? strictMatch)
+        {
+            if (strictMatch == Spell.Fire) return true;
+            if (strictMatch.HasValue) return false; // a confident other rune wins
+            var s = Pinch;
+            return RuneRecognizer.IsRoughCircle(samples, s.circleMinSweep, s.circleMaxRadiusVariation,
+                s.circleMaxCorner, s.circleMinSize);
         }
 
         void Sample(Vector3 point)
@@ -536,6 +594,26 @@ namespace Runeveil
             maxDisplacementSquared = Mathf.Max(maxDisplacementSquared, offset.sqrMagnitude);
             samples.Add(new Vector2(Vector3.Dot(offset, strokeRight), Vector3.Dot(offset, strokeUp)));
             points.Add(point);
+            if (chargedSpell.HasValue) chargeAnchor = point;
+            CheckCharge();
+        }
+
+        // Recognize the rune while the stroke is still being drawn. A completed circle
+        // charges Fire immediately; releasing then casts it.
+        void CheckCharge()
+        {
+            if (chargedSpell.HasValue || !drawing || Time.unscaledTime < nextChargeCheck) return;
+            nextChargeCheck = Time.unscaledTime + ChargeCheckInterval;
+
+            chargeMatches = LooksLikeFire(RuneRecognizer.MatchRune(samples)) ? chargeMatches + 1 : 0;
+            if (chargeMatches < ChargeConfirmations) return;
+
+            chargedSpell = Spell.Fire;
+            chargeHand = strokeHand;
+            chargeAnchor = points[points.Count - 1];
+            RefreshHandLabel();
+            sfx.PlayCharge(chargeAnchor, Pinch);
+            Notify(usingXr ? "Fire charged! Look at a target and release" : "Fire charged! Release to cast");
         }
 
         void Release(Vector3 point, AimSample aim)
@@ -546,16 +624,22 @@ namespace Runeveil
             drawing = false;
             strokeHand = null;
             strokeFadeUntil = Time.unscaledTime + 0.28f;
-            var spell = RuneRecognizer.MatchRune(samples);
+            var recognized = RuneRecognizer.MatchRune(samples);
+            if (!recognized.HasValue && LooksLikeFire(null)) recognized = Spell.Fire;
+            chargeMatches = 0;
             var settings = Pinch;
             bool shortPinch = usingXr && Time.unscaledTime - strokeStarted <= settings.tapMaxDuration &&
                 maxDisplacementSquared <= settings.tapMaxMovement * settings.tapMaxMovement;
-            if (!spell.HasValue && shortPinch && aim.Ray.HasValue && hud.ActionHit(aim.Ray.Value))
+            if (!recognized.HasValue && shortPinch && aim.Ray.HasValue && hud.ActionHit(aim.Ray.Value))
             {
                 StartBattle();
                 return;
             }
-            if (duel.Finished) return;
+            // A held charge is spent only when it is actually cast; otherwise it is kept.
+            // Drawing a different rune casts that rune and keeps the fire charge for later.
+            var spell = recognized.HasValue && recognized != chargedSpell ? recognized : chargedSpell ?? recognized;
+            bool releasingCharge = chargedSpell.HasValue && spell == chargedSpell;
+            if (duel.Finished && !releasingCharge) return;
             if (!spell.HasValue)
             {
                 RecordCast(null, ArenaTarget.Miss, "invalid");
@@ -569,11 +653,23 @@ namespace Runeveil
                 return;
             }
 
+            if (releasingCharge)
+            {
+                chargedSpell = null;
+                chargeHand = null;
+            }
             var target = spell == Spell.Barrier ? ArenaTarget.Miss : aim.Target;
             Vector3 hit = spell == Spell.Barrier ? point : aim.Hit;
+            if (duel.Finished)
+            {
+                arena.Cast(spell.Value, point, hit, ArenaTarget.Miss, view.transform.position, view.transform.forward);
+                sfx.PlayCast(spell.Value, point, Pinch);
+                return;
+            }
             var cast = duel.Cast(spell.Value, target, aim.Focused);
             RecordCast(spell, target, cast.ToString());
             arena.Cast(spell.Value, point, hit, target, view.transform.position, view.transform.forward);
+            sfx.PlayCast(spell.Value, point, Pinch);
             spellLabel = spell == Spell.Barrier ? "Ward" : spell.Value.ToString();
             if (duel.Phase == DuelPhase.Won) ShowResult("Victory");
             else Notify(cast switch
@@ -656,6 +752,8 @@ namespace Runeveil
 
         void ClearStroke()
         {
+            chargeMatches = 0;
+            nextChargeCheck = 0f;
             drawing = false;
             strokeHand = null;
             strokeFadeUntil = 0;

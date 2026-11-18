@@ -53,6 +53,32 @@ namespace Runeveil
         [Tooltip("Farthest the fingertip may travel during a button press (meters).")]
         [Range(0.01f, 0.1f)] public float tapMaxMovement = 0.04f;
 
+        [Header("Circle = Fire charge (looser than the normal rune match)")]
+        [Tooltip("How far around the circle you must go (degrees). Lower = easier. 360 = full loop.")]
+        [Range(180f, 360f)] public float circleMinSweep = 280f;
+        [Tooltip("How round it must be. Higher = ovals and wobbly circles count.")]
+        [Range(0.1f, 0.7f)] public float circleMaxRadiusVariation = 0.38f;
+        [Tooltip("Sharpest allowed bend (degrees). Lower = triangles are rejected more strictly.")]
+        [Range(40f, 150f)] public float circleMaxCorner = 75f;
+        [Tooltip("Smallest circle size (meters).")]
+        [Range(0.01f, 0.15f)] public float circleMinSize = 0.03f;
+
+        [Header("Sound effects")]
+        [Range(0f, 1f)] public float sfxVolume = 0.8f;
+        [Tooltip("Fingertips touch (stroke starts).")]
+        [Range(0f, 1f)] public float touchVolume = 0.8f;
+        [Tooltip("Crackle while the fingertip moves. Louder when moving faster.")]
+        [Range(0f, 1f)] public float drawVolume = 0.55f;
+        [Tooltip("Fire charge complete.")]
+        [Range(0f, 1f)] public float chargeVolume = 1f;
+        [Tooltip("Spell release.")]
+        [Range(0f, 1f)] public float castVolume = 1f;
+
+        [Header("Drawing sparks")]
+        public bool sparks = true;
+        [Tooltip("Spark amount multiplier. More sparks appear when the fingertip moves faster.")]
+        [Range(0f, 3f)] public float sparkAmount = 1f;
+
         [Header("Debug")]
         [Tooltip("Show a live pinch meter in the headset HUD.")]
         public bool showDebugMeter;

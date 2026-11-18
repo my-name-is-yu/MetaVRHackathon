@@ -43,6 +43,103 @@ namespace Runeveil
             throw new ArgumentOutOfRangeException(nameof(spell), spell, "Unknown rune spell.");
         }
 
+        /// <summary>
+        /// Lenient circle test used for the Fire charge. Accepts wobbly, oval or slightly open
+        /// circles, but rejects shapes with sharp corners (triangles, Z, V).
+        /// </summary>
+        public static bool IsRoughCircle(IReadOnlyList<Vector2> raw, float minSweepDegrees, float maxRadiusVariation,
+            float maxCornerDegrees, float minSpan)
+        {
+            if (raw == null || raw.Count < MinimumPoints)
+                return false;
+
+            GetBounds(raw, out Vector2 min, out Vector2 max);
+            Vector2 dimensions = max - min;
+            float span = Mathf.Max(dimensions.x, dimensions.y);
+            if (span < minSpan || Mathf.Min(dimensions.x, dimensions.y) < span * 0.35f)
+                return false;
+
+            const int count = 40;
+            var points = Smooth(Resample(raw, count), 2);
+            Vector2 center = Vector2.zero;
+            foreach (Vector2 point in points) center += point;
+            center /= count;
+
+            float meanRadius = 0f;
+            foreach (Vector2 point in points) meanRadius += (point - center).magnitude;
+            meanRadius /= count;
+            if (meanRadius < span * 0.2f)
+                return false;
+
+            float variance = 0f;
+            foreach (Vector2 point in points)
+            {
+                float d = (point - center).magnitude - meanRadius;
+                variance += d * d;
+            }
+            if (Mathf.Sqrt(variance / count) / meanRadius > maxRadiusVariation)
+                return false;
+
+            float sweep = 0f;
+            for (int i = 1; i < count; i++)
+                sweep += Vector2.SignedAngle(points[i - 1] - center, points[i] - center);
+            if (Mathf.Abs(sweep) < minSweepDegrees)
+                return false;
+
+            // Corners: turning measured over three segments so hand jitter does not count as a corner.
+            const int reach = 3;
+            for (int i = reach; i < count - reach; i++)
+            {
+                Vector2 before = points[i] - points[i - reach];
+                Vector2 after = points[i + reach] - points[i];
+                if (before.sqrMagnitude < 1e-10f || after.sqrMagnitude < 1e-10f) continue;
+                if (Mathf.Abs(Vector2.SignedAngle(before, after)) > maxCornerDegrees)
+                    return false;
+            }
+            return true;
+        }
+
+        private static List<Vector2> Smooth(List<Vector2> points, int radius)
+        {
+            var result = new List<Vector2>(points.Count);
+            for (int i = 0; i < points.Count; i++)
+            {
+                int from = Mathf.Max(0, i - radius);
+                int to = Mathf.Min(points.Count - 1, i + radius);
+                Vector2 sum = Vector2.zero;
+                for (int j = from; j <= to; j++) sum += points[j];
+                result.Add(sum / (to - from + 1));
+            }
+            return result;
+        }
+
+        private static List<Vector2> Resample(IReadOnlyList<Vector2> raw, int count)
+        {
+            var result = new List<Vector2>(count);
+            float total = (float)PathLength(raw);
+            float interval = total / (count - 1);
+            float carried = 0f;
+            Vector2 previous = raw[0];
+            result.Add(previous);
+            for (int i = 1; i < raw.Count && result.Count < count; i++)
+            {
+                Vector2 current = raw[i];
+                float segment = Vector2.Distance(previous, current);
+                while (segment > 0f && carried + segment >= interval && result.Count < count)
+                {
+                    float t = (interval - carried) / segment;
+                    previous = Vector2.Lerp(previous, current, t);
+                    result.Add(previous);
+                    segment = Vector2.Distance(previous, current);
+                    carried = 0f;
+                }
+                carried += segment;
+                previous = current;
+            }
+            while (result.Count < count) result.Add(raw[raw.Count - 1]);
+            return result;
+        }
+
         public static Spell? MatchRune(IReadOnlyList<Vector2> raw)
         {
             if (raw == null || raw.Count < 3)
