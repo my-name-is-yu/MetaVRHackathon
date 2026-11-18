@@ -413,7 +413,7 @@ namespace Runeveil
             CreateGlyph(Spell.Rock, "Stone shot", new Color32(228, 185, 154, 255), -132, -78);
             CreateGlyph(Spell.Wind, "Wind blade", new Color32(207, 182, 255, 255), 0, -78);
             CreateGlyph(Spell.Barrier, "Ward", Mint, 132, -78);
-            Label("Combat tip", guide, "Fist raised? Hold gaze on the pink core.\nA closed ring means extra damage.\nLightning interrupts. Ward blocks one hit.",
+            Label("Combat tip", guide, "Fist rising? Look at a hand, horn or core.\nHold until the ring closes for extra damage.\nLightning to the core stops the strike.",
                 18, Muted, 392, 65, 0, -153, TextAnchor.MiddleLeft);
         }
 

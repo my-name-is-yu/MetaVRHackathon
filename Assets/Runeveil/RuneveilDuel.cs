@@ -12,9 +12,10 @@ namespace Runeveil
         public const float FocusSeconds = 0.35f;
         const float IdleSeconds = 2f;
         const float WindupSeconds = 2.4f;
-        const int FocusBonus = 8;
+        public const int FocusBonus = 8;
         float attackIn = IdleSeconds;
         float focusedSeconds;
+        ArenaTarget focusTarget;
 
         public DuelPhase Phase { get; private set; } = DuelPhase.Practice;
         public int BossHealth { get; private set; } = MaxBossHealth;
@@ -26,6 +27,7 @@ namespace Runeveil
         public bool Finished => Phase == DuelPhase.Won || Phase == DuelPhase.Lost;
         public float FocusProgress => FocusReady ? 1f : focusedSeconds / FocusSeconds;
         public bool FocusReady => focusedSeconds >= FocusSeconds - 0.000001f;
+        public ArenaTarget ExposedTarget => FocusReady ? focusTarget : ArenaTarget.Miss;
 
         public void StartBattle()
         {
@@ -57,20 +59,21 @@ namespace Runeveil
             return blocked ? AttackResult.Blocked : AttackResult.Hit;
         }
 
-        public void TrackFocus(bool gazeOnCore, float deltaTime)
+        public void TrackFocus(ArenaTarget target, float deltaTime)
         {
-            if (Finished || Windup < 0 || !gazeOnCore)
+            if (Finished || Windup < 0 || !target.IsWeakPoint()) target = ArenaTarget.Miss;
+            if (target != focusTarget)
             {
                 focusedSeconds = 0f;
-                return;
+                focusTarget = target;
             }
 
             // When this frame crossed into windup, count only its time within the warning.
-            if (deltaTime > 0f)
+            if (target != ArenaTarget.Miss && deltaTime > 0f)
                 focusedSeconds = Mathf.Min(FocusSeconds, focusedSeconds + Mathf.Min(deltaTime, -attackIn));
         }
 
-        public CastResult Cast(Spell spell, ArenaTarget target, bool focusedAtRelease = false)
+        public CastResult Cast(Spell spell, ArenaTarget target, ArenaTarget exposedAtRelease = ArenaTarget.Miss)
         {
             if (Finished) return CastResult.None;
             if (spell == Spell.Barrier)
@@ -95,7 +98,7 @@ namespace Runeveil
             bool activeWarning = Windup >= 0f;
             // The pinch debounce can finish after the eyes have moved. Use readiness at release
             // but require the warning to still be active when the cast is committed.
-            bool focused = focusedAtRelease && coreHit && activeWarning;
+            bool focused = activeWarning && target.IsWeakPoint() && target == exposedAtRelease;
             bool interrupted = spell == Spell.Lightning && coreHit && activeWarning;
             if (interrupted)
             {
@@ -123,6 +126,7 @@ namespace Runeveil
             attackIn = IdleSeconds;
             Windup = -1;
             focusedSeconds = 0f;
+            focusTarget = ArenaTarget.Miss;
         }
     }
 }

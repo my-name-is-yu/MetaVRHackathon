@@ -82,14 +82,14 @@ namespace Runeveil
             public readonly Ray? Ray;
             public readonly ArenaTarget Target;
             public readonly Vector3 Hit;
-            public readonly bool Focused;
+            public readonly ArenaTarget ExposedTarget;
 
-            public AimSample(Ray? ray, ArenaTarget target, Vector3 hit, bool focused)
+            public AimSample(Ray? ray, ArenaTarget target, Vector3 hit, ArenaTarget exposedTarget)
             {
                 Ray = ray;
                 Target = target;
                 Hit = hit;
-                Focused = focused;
+                ExposedTarget = exposedTarget;
             }
         }
 
@@ -151,11 +151,11 @@ namespace Runeveil
             else if (preview) ray = MouseAim(out mousePointer);
             Vector3 hit = default;
             var target = ray.HasValue ? arena.Aim(ray.Value, out hit) : ArenaTarget.Miss;
-            bool onCore = active && target == ArenaTarget.Core;
+            var aimed = active ? target : ArenaTarget.Miss;
             bool wasFocused = duel.FocusReady;
-            duel.TrackFocus(onCore && duel.Windup >= 0, deltaTime);
+            duel.TrackFocus(arena.IsWeakPointExposed(aimed, duel.Windup) ? aimed : ArenaTarget.Miss, deltaTime);
             if (Debug.isDebugBuild && usingXr && !wasFocused && duel.FocusReady) focusLocks++;
-            var aim = new AimSample(ray, target, hit, onCore && duel.FocusReady);
+            var aim = new AimSample(ray, target, hit, duel.ExposedTarget);
 
             if (usingXr) UpdateHands(aim);
             else if (preview) UpdateMouse(aim);
@@ -166,16 +166,14 @@ namespace Runeveil
             }
             if (Debug.isDebugBuild) ReportInputs(ray.HasValue);
             arena.Tick(deltaTime, duel.Windup, duel.Shield, duel.Phase == DuelPhase.Won,
-                onCore, duel.FocusProgress, duel.FocusReady);
+                aimed, duel.FocusProgress, duel.FocusReady);
             arena.SetCharge(chargedSpell, chargeAnchor, view.transform.position, deltaTime);
             UpdateDrawingFeedback(deltaTime);
 
             string focus = target switch
             {
-                ArenaTarget.Core when duel.FocusReady => "Core exposed",
-                ArenaTarget.Core when duel.FocusProgress > 0 => "Focusing on core",
-                ArenaTarget.Core => locked ? "Core locked" : "Crystal core",
                 ArenaTarget.Body => locked ? "Muse locked" : "Corrupted Muse",
+                _ when target.IsWeakPoint() => target.DisplayName(),
                 _ => usingXr && !ray.HasValue ? "Eye gaze unavailable" : locked ? "Aim locked" : ""
             };
             string status = Time.unscaledTime < noticeUntil ? notice : DefaultStatus();
@@ -238,7 +236,7 @@ namespace Runeveil
 
         void SelectCamera(bool xr)
         {
-            duel.TrackFocus(false, 0);
+            duel.TrackFocus(ArenaTarget.Miss, 0);
             ResetEyeEvidence();
             leftReady = rightReady = false;
             locked = false;
@@ -275,14 +273,14 @@ namespace Runeveil
             if (duel.Finished) return resultSummary;
             if (usingXr && !string.IsNullOrEmpty(gazeHint)) return gazeHint;
             if (usingXr && !handPosition.HasValue) return "Bring a hand into view, then pinch";
-            if (duel.FocusReady) return "Core exposed! Release an attack rune at the crystal";
+            if (duel.FocusReady) return "Weak point exposed! Release an attack rune";
             if (chargedSpell.HasValue && !drawing)
                 return chargedSpell == Spell.Barrier
                     ? (usingXr ? "Ward charged — pinch and release to raise it" : "Ward charged — click to raise it")
                     : $"{ChargeName(chargedSpell.Value)} charged — " +
                       (usingXr ? "look at a target, pinch and release" : "click to cast");
-            if (duel.Windup >= 0) return "Hold your gaze on the crystal, interrupt with Lightning, or draw a Ward";
-            if (duel.Phase == DuelPhase.Battle) return "Aim for the crystal core";
+            if (duel.Windup >= 0) return "Hold your gaze on the crystal, a horn, the right hand or the raised fist";
+            if (duel.Phase == DuelPhase.Battle) return "Watch for Muse to raise a fist";
             return "";
         }
 
@@ -714,7 +712,7 @@ namespace Runeveil
                 sfx.PlayCast(spell.Value, point, Pinch);
                 return;
             }
-            var cast = duel.Cast(spell.Value, target, aim.Focused);
+            var cast = duel.Cast(spell.Value, target, aim.ExposedTarget);
             RecordCast(spell, target, cast.ToString());
             arena.Cast(spell.Value, point, hit, target, view.transform.position, view.transform.forward);
             sfx.PlayCast(spell.Value, point, Pinch);
@@ -723,10 +721,10 @@ namespace Runeveil
             else Notify(cast switch
             {
                 CastResult.Interrupt => "Lightning interrupted the strike",
-                CastResult.FocusHit => "Focused strike! The exposed crystal took extra damage",
+                CastResult.FocusHit => $"{target.DisplayName()} hit! +{RuneveilDuel.FocusBonus} focus damage",
                 CastResult.Shield => "Ward ready for the next strike",
                 CastResult.Miss => "The spell missed",
-                _ => target == ArenaTarget.Core ? "Crystal core hit" : "Muse hit"
+                _ => target.IsWeakPoint() ? $"{target.DisplayName()} hit" : "Muse hit"
             });
         }
 
@@ -755,7 +753,7 @@ namespace Runeveil
             leftPinch.Reset();
             rightPinch.Reset();
             pendingReleaseAim = default;
-            duel.TrackFocus(false, 0);
+            duel.TrackFocus(ArenaTarget.Miss, 0);
             handPosition = null;
             ResetEyeEvidence();
         }
