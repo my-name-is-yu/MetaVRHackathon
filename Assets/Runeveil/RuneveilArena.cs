@@ -5,12 +5,16 @@ using UnityEngine.Rendering;
 
 namespace Runeveil
 {
+    /// <summary>照準の当たり先。Core は今光っている弱点を指し、胸の結晶とは限らない。</summary>
     public enum ArenaTarget { Miss, Body, Core }
 
     public sealed partial class RuneveilArena : MonoBehaviour
     {
         private const float BossDepth = 5.76f;
         private const float CastRange = 9f;
+        public const int WeakPointCount = 4;
+        /// <summary>弱点の部位名。添字は胸・頭・左腕・右腕の順（左右はプレイヤーから見た向き）。</summary>
+        public static readonly string[] WeakPointNames = { "chest", "head", "left arm", "right arm" };
         private static readonly int BaseColor = Shader.PropertyToID("_BaseColor");
 
         private readonly List<UnityEngine.Object> generatedAssets = new();
@@ -22,8 +26,15 @@ namespace Runeveil
         private Arm attackArm;
         private Arm anchorArm;
         private Transform warningArcs;
-        private MeshRenderer coreRenderer;
-        private MeshRenderer coreLight;
+        private readonly Transform[] weakAnchors = new Transform[WeakPointCount];
+        private readonly MeshRenderer[] weakGems = new MeshRenderer[WeakPointCount];
+        private readonly MeshRenderer[] weakHalos = new MeshRenderer[WeakPointCount];
+        private readonly HitVolume[] weakVolumes = new HitVolume[WeakPointCount];
+        private readonly float[] weakGlow = new float[WeakPointCount];
+        private int activeWeak;
+        private int brokenWeak = -1;
+        private float breakFlash;
+        private float weakPop;
         private Material stone;
         private Material vivid;
         private Material glow;
@@ -47,6 +58,10 @@ namespace Runeveil
         private float slam;
         private float flinch;
         private float defeat;
+        private float down;
+        private float pin;
+        private float rage;
+        private float hitStop;
         private float wardFlashTime;
         private float wardOpacity;
         private Transform focusIndicator;
@@ -109,6 +124,11 @@ namespace Runeveil
         private Vector3 viewHead;
 
         public Transform Core { get; private set; }
+        /// <summary>今光っている弱点の部位番号。割れて次が現れるまでの間は -1。</summary>
+        public int ActiveWeakPoint => activeWeak;
+        public bool HitStopping => hitStop > 0f;
+
+        public Vector3 WeakPointPosition(int part) => weakAnchors[Mathf.Max(part, 0)].position;
 
         public void Build()
         {
@@ -151,7 +171,8 @@ namespace Runeveil
                 bodyDistance = Mathf.Min(bodyDistance, hit);
             }
 
-            float coreDistance = Core != null ? coreVolume.Intersect(ray) : float.PositiveInfinity;
+            // 光っている弱点だけを判定する
+            float coreDistance = activeWeak >= 0 ? weakVolumes[activeWeak].Intersect(ray) : float.PositiveInfinity;
             if (coreDistance <= CastRange && coreDistance <= bodyDistance + 0.08f)
             {
                 point = ray.GetPoint(coreDistance);
@@ -168,29 +189,85 @@ namespace Runeveil
             return ArenaTarget.Miss;
         }
 
-        public void Tick(float dt, float windup, bool shield, bool won, bool coreAimed,
-            float focusProgress = 0f, bool focusReady = false)
+        /// <summary>弱点を狙えていないときの着弾点。プレイヤーから胴体の中心へ向けた線が当たる位置を返す。</summary>
+        public Vector3 BodyPoint(Vector3 from)
         {
-            dt = Mathf.Clamp(dt, 0f, 0.05f);
-            age += dt;
-            slam = Mathf.Max(0f, slam - dt);
-            flinch = Mathf.Max(0f, flinch - 2.25f * dt);
-            defeat = Damp(defeat, won ? 1f : 0f, 3.8f, dt);
-            bool rising = windup >= 0f && !won;
-            float charge = Mathf.Clamp01(windup);
-            lift = Damp(lift, rising ? Mathf.SmoothStep(0f, 1f, charge / 0.72f) : 0f, rising ? 7.8f : 6f, dt);
-            float thrust = slam > 0f ? Mathf.Sin(Mathf.PI * Mathf.Min(0.98f, (1f - slam / 0.52f) * 1.46f)) * (1f - defeat) : 0f;
-            boss.localPosition = new Vector3(0f, Mathf.Sin(age * 1.2f) * 0.019f - defeat * 0.59f - thrust * 0.10f, BossDepth);
-            boss.localRotation = Quaternion.Euler(0f, 1.45f * Mathf.Sin(age * 0.67f) - 9.7f * thrust,
-                2.8f + Mathf.Sin(age * 0.91f) * 0.86f + flinch * Mathf.Sin(age * 26f) * 1.9f - defeat * 7.5f);
-            PoseMuse(rising, coreAimed, charge, thrust);
-            TickEffects(dt, shield);
-            TickFocusIndicator(rising, focusProgress, focusReady);
+            Vector3 center = boss.TransformPoint(MusePoint(new Vector2(626, 900), 0f));
+            Aim(new Ray(from, center - from), out Vector3 point);
+            return point;
         }
 
-        /// <summary>Launches a spell. Returns its flight time in seconds (0 for Ward).</summary>
-        public float Cast(Spell spell, Vector3 from, Vector3 to, ArenaTarget target, Vector3 head, Vector3 forward,
-            int level = 1)
+        public void Tick(float dt, float windup, bool shield, bool won, bool coreAimed, bool staggered, bool stuck,
+            bool enraged, int weakPoint, float focusProgress = 0f, bool focusReady = false)
+        {
+            dt = Mathf.Clamp(dt, 0f, 0.05f);
+            if (weakPoint != activeWeak)
+            {
+                // 光っていた弱点が消えたら割れる演出、新しく現れたら膨らむ演出を出す
+                if (activeWeak >= 0 && weakPoint < 0)
+                {
+                    brokenWeak = activeWeak;
+                    breakFlash = 1f;
+                }
+                activeWeak = weakPoint;
+                if (activeWeak >= 0) weakPop = 1f;
+            }
+            breakFlash = Mathf.Max(0f, breakFlash - dt * 2.2f);
+            weakPop = Mathf.Max(0f, weakPop - dt * 3f);
+
+            // ヒットストップ中はボスの動きだけを止め、弾やバリアの演出は進める
+            float bossDt = hitStop > 0f ? 0f : dt;
+            hitStop = Mathf.Max(0f, hitStop - dt);
+            age += bossDt;
+            slam = Mathf.Max(0f, slam - bossDt);
+            flinch = Mathf.Max(0f, flinch - 2.25f * bossDt);
+            defeat = Damp(defeat, won ? 1f : 0f, 3.8f, bossDt);
+            down = Damp(down, staggered && !won ? 1f : 0f, staggered ? 9f : 4f, bossDt);
+            pin = Damp(pin, stuck && !won ? 1f : 0f, stuck ? 14f : 5f, bossDt);
+            rage = Damp(rage, enraged && !won ? 1f : 0f, 3f, bossDt);
+            bool rising = windup >= 0f && !won;
+            float charge = Mathf.Clamp01(windup);
+            lift = Damp(lift, rising ? Mathf.SmoothStep(0f, 1f, charge / 0.72f) : 0f, rising ? 7.8f : 6f, bossDt);
+            float thrust = slam > 0f ? Mathf.Sin(Mathf.PI * Mathf.Min(0.98f, (1f - slam / 0.52f) * 1.46f)) * (1f - defeat) : 0f;
+            // バリアに防がれた拳は硬直が終わるまで振り下ろした位置に残す
+            thrust = Mathf.Max(thrust, pin * (1f - defeat));
+            // 受けた側として横にだけ震わせる。残り時間に比例させて大→小に収束させる
+            float shake = Mathf.Sin(hitStop * 160f) * hitStop * 0.45f;
+            boss.localPosition = new Vector3(shake,
+                Mathf.Sin(age * 1.2f) * 0.019f - defeat * 0.59f - down * 0.30f - thrust * 0.10f, BossDepth);
+            boss.localRotation = Quaternion.Euler(-6f * down, 1.45f * Mathf.Sin(age * 0.67f) - 9.7f * thrust,
+                2.8f + Mathf.Sin(age * 0.91f) * 0.86f + flinch * Mathf.Sin(age * 26f) * 1.9f - defeat * 7.5f - down * 3.5f);
+            PoseMuse(rising, thrust);
+            TickWeakPoints(dt, rising, coreAimed, charge);
+            TickEffects(dt, shield);
+            TickFocusIndicator(rising, staggered, coreAimed, focusProgress, focusReady);
+        }
+
+        private void TickWeakPoints(float dt, bool rising, bool aimed, float charge)
+        {
+            float pulse = 0.5f + 0.5f * Mathf.Sin(age * 3.8f);
+            Color lit = Color.Lerp(Color.white, Rgb(0xffc1e5),
+                0.32f + (rising ? 0.38f * charge : 0.09f * pulse) + down * 0.3f);
+            float litHalo = 0.13f + 0.08f * pulse + (rising ? 0.19f : 0f) + down * 0.25f + (aimed ? 0.09f : 0f);
+            float litScale = 1f + pulse * 0.09f + 0.11f * lift + down * 0.3f;
+            for (int i = 0; i < WeakPointCount; i++)
+            {
+                // 光っていない部位は眠った暗い結晶として残し、弱点になりうる場所を見せておく
+                weakGlow[i] = Damp(weakGlow[i], i == activeWeak ? 1f : 0f, i == activeWeak ? 10f : 6f, dt);
+                float glowAmount = weakGlow[i];
+                float broken = i == brokenWeak ? breakFlash : 0f;
+                float popping = i == activeWeak ? weakPop : 0f;
+                Vector3 haloSize = i == 0 ? new Vector3(0.64f, 0.81f, 1f) : new Vector3(0.42f, 0.53f, 1f);
+                Tint(weakGems[i], Color.Lerp(Rgb(0x5a3c50), lit, glowAmount) * Mathf.Lerp(1f, 0.36f, defeat), 1f);
+                weakGems[i].transform.localScale = Vector3.one * (1f - broken * 0.35f + popping * 0.3f);
+                Tint(weakHalos[i], Color.Lerp(Rgb(0xff6fb1), Color.white, broken),
+                    (glowAmount * litHalo + broken * 0.9f) * (1f - defeat));
+                weakHalos[i].transform.localScale = haloSize * (litScale + broken * 1.4f + popping * 0.5f);
+            }
+        }
+
+        /// <summary>魔法の見た目を出し、攻撃魔法なら着弾までの秒数を返す（バリアは0）。怯みとヒットストップは着弾時の <see cref="Hit"/> で出す。</summary>
+        public float Cast(Spell spell, Vector3 from, Vector3 to, Vector3 head, Vector3 forward, int level = 1)
         {
             viewHead = head;
             level = Mathf.Max(1, level);
@@ -272,11 +349,23 @@ namespace Runeveil
             Tint(shot.Bolt, shot.Color, 0.9f);
             Tint(shot.Trail, shot.Color, 0.45f);
             MoveProjectile(shot, 0f);
-
-            if (target != ArenaTarget.Miss)
-                flinch = spell == Spell.Lightning && target == ArenaTarget.Core ? 1f
-                    : Mathf.Max(flinch, Mathf.Min(1f, 0.33f + 0.15f * (level - 1)));
             return shot.Duration;
+        }
+
+        /// <summary>攻撃魔法の着弾時に呼び、ボスを怯ませてヒットストップをかける。</summary>
+        public void Hit(Spell spell, ArenaTarget target, bool strong, bool finalBlow, int level = 1)
+        {
+            if (target == ArenaTarget.Miss) return;
+            level = Mathf.Max(1, level);
+
+            // 威力に応じて止める時間を変え、拳を止めた一撃・ダウン中の弱点・止めの一撃は長く止める
+            float length = spell switch { Spell.Rock => 0.10f, Spell.Lightning => 0.05f, _ => 0.07f };
+            if (target == ArenaTarget.Core) length *= 1.3f;
+            length *= 1f + 0.15f * (level - 1);
+            if (strong) length = Mathf.Max(length, 0.16f);
+            if (finalBlow) length = 0.35f;
+            hitStop = Mathf.Max(hitStop, length);
+            flinch = strong ? 1f : Mathf.Max(flinch, Mathf.Min(1f, 0.33f + 0.15f * (level - 1)));
         }
 
         public void Impact(bool blocked)
@@ -287,7 +376,11 @@ namespace Runeveil
 
         public void ResetArena()
         {
-            age = lift = slam = flinch = defeat = wardFlashTime = wardOpacity = 0f;
+            age = lift = slam = flinch = defeat = down = pin = rage = hitStop = wardFlashTime = wardOpacity = 0f;
+            breakFlash = weakPop = 0f;
+            brokenWeak = -1;
+            activeWeak = -1;
+            Array.Clear(weakGlow, 0, weakGlow.Length);
             nextProjectile = 0;
             wardRoot.gameObject.SetActive(false);
             foreach (Projectile shot in projectiles)
@@ -295,7 +388,8 @@ namespace Runeveil
                 shot.Age = -1f;
                 shot.Root.gameObject.SetActive(false);
             }
-            Tick(0f, -1f, false, false, false);
+            Tick(0f, -1f, false, false, false, false, false, false, 0);
+            breakFlash = weakPop = 0f;
         }
 
         private void BuildFocusIndicator()
@@ -339,16 +433,20 @@ namespace Runeveil
                 at + Vector3.up * 0.046f, at + Vector3.right * 0.038f, 0xffffff);
         }
 
-        private void TickFocusIndicator(bool warning, float progress, bool ready)
+        private void TickFocusIndicator(bool warning, bool staggered, bool aimed, float progress, bool ready)
         {
-            bool visible = warning && Core != null;
+            // 振り上げ中に加え、ダウン中や弱点を見ているときも、光っている弱点に枠を出して狙い先を示す
+            bool visible = (warning || staggered || aimed) && activeWeak >= 0 && defeat < 0.2f;
             focusIndicator.gameObject.SetActive(visible);
             if (!visible) return;
 
-            focusIndicator.SetPositionAndRotation(Core.position - boss.forward * 0.36f, boss.rotation);
+            bool chest = activeWeak == 0;
+            focusIndicator.SetPositionAndRotation(weakAnchors[activeWeak].position - boss.forward * (chest ? 0.36f : 0.25f),
+                boss.rotation);
             // The arc closes and grows outward at full focus. The diamonds distinguish
             // an exposed core from a charged arc even when its colors are hard to see.
-            focusIndicator.localScale = Vector3.one * (ready ? 1.18f : 1f);
+            focusIndicator.localScale = Vector3.one * (ready ? 1.18f : 1f) * (chest ? 1f : 0.62f);
+            if (!warning) progress = 0f;
             focusCorners.enabled = !ready;
             focusBurst.enabled = ready;
             int lastSegment = ready ? focusArcPoints.Length - 1 :

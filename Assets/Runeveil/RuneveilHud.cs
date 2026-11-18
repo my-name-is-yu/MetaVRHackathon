@@ -56,6 +56,12 @@ namespace Runeveil
         private LineRenderer stroke;
         private Material strokeMaterial;
 
+        private const float CooldownTileHeight = 70f;
+        private RectTransform cooldowns;
+        private readonly RectTransform[] cooldownShades = new RectTransform[(int)Spell.Barrier + 1];
+        private readonly Text[] cooldownTimes = new Text[(int)Spell.Barrier + 1];
+        private readonly int[] cooldownTenths = new int[(int)Spell.Barrier + 1];
+
         private const float PinchBarWidth = 180f;
         private const float PinchBarLeft = -125f;
         private RectTransform pinchMeter;
@@ -91,6 +97,7 @@ namespace Runeveil
             CreateGuide();
             CreateVitalityPanel();
             CreateTargetingPanel();
+            CreateCooldownPanel();
             CreateAction();
             notice = Panel("Duel event", canvasRect, 570, 80);
             noticeText = Label("Message", notice, "", 23, Paper, 542, 70, 0, 0);
@@ -294,6 +301,23 @@ namespace Runeveil
             handLabel.color = color;
         }
 
+        /// <summary>魔法ごとのクールタイムを、模様に重ねた影の高さと残り秒数で示す。</summary>
+        public void SetCooldown(Spell spell, float remaining, float total)
+        {
+            if (cooldowns == null)
+                return;
+
+            int index = (int)spell;
+            int tenths = Mathf.CeilToInt(Mathf.Max(0f, remaining) * 10f);
+            if (cooldownTenths[index] == tenths)
+                return;
+
+            cooldownTenths[index] = tenths;
+            float ratio = total > 0f ? Mathf.Clamp01(remaining / total) : 0f;
+            cooldownShades[index].SetSizeWithCurrentAnchors(RectTransform.Axis.Vertical, CooldownTileHeight * ratio);
+            cooldownTimes[index].text = tenths > 0 ? (tenths / 10f).ToString("0.0") : "";
+        }
+
         public void SetHand(Vector3? worldPosition)
         {
             handPosition = worldPosition;
@@ -331,7 +355,7 @@ namespace Runeveil
             spatial = xrInput;
             RefreshControls();
             Vector3 panelScale = Vector3.one * (spatial ? 0.9f : 1f);
-            foreach (RectTransform panel in new[] { boss, guide, vitality, targeting, action, notice })
+            foreach (RectTransform panel in new[] { boss, guide, vitality, targeting, cooldowns, action, notice })
                 panel.localScale = panelScale;
 
             if (!spatial)
@@ -349,6 +373,7 @@ namespace Runeveil
             guide.anchoredPosition = new Vector2(-409, -21);
             vitality.anchoredPosition = new Vector2(-422, -518);
             targeting.anchoredPosition = new Vector2(422, -518);
+            cooldowns.anchoredPosition = new Vector2(0, -518);
             action.anchoredPosition = new Vector2(-409, -254);
             notice.anchoredPosition = new Vector2(0, -390);
         }
@@ -375,8 +400,9 @@ namespace Runeveil
             guide.anchoredPosition = new Vector2(guideX, 10);
             vitality.anchoredPosition = new Vector2(-statusX, -385);
             targeting.anchoredPosition = new Vector2(statusX, -385);
+            cooldowns.anchoredPosition = new Vector2(0, -385);
             action.anchoredPosition = new Vector2(guideX, -241);
-            notice.anchoredPosition = new Vector2(0, desktopAspect >= 1.6f ? -385 : -280);
+            notice.anchoredPosition = new Vector2(0, -280);
         }
 
         private void RefreshControls()
@@ -413,8 +439,38 @@ namespace Runeveil
             CreateGlyph(Spell.Rock, "Stone shot", new Color32(228, 185, 154, 255), -132, -78);
             CreateGlyph(Spell.Wind, "Wind blade", new Color32(207, 182, 255, 255), 0, -78);
             CreateGlyph(Spell.Barrier, "Ward", Mint, 132, -78);
-            Label("Combat tip", guide, "Fist raised? Hold gaze on the pink core.\nA closed ring means extra damage.\nLightning interrupts. Ward blocks one hit.",
+            Label("Combat tip", guide, "Fist raised? Hold gaze on the glowing crystal.\nA closed ring means extra damage. Lightning\ninterrupts. Ward just before the strike lands.",
                 18, Muted, 392, 65, 0, -153, TextAnchor.MiddleLeft);
+        }
+
+        private void CreateCooldownPanel()
+        {
+            cooldowns = Panel("Spell cooldowns", canvasRect, 516, 90);
+            CreateCooldownTile(Spell.Fire, "Fireball", new Color32(255, 153, 125, 255), -210);
+            CreateCooldownTile(Spell.Lightning, "Lightning", new Color32(255, 213, 106, 255), -126);
+            CreateCooldownTile(Spell.Ice, "Ice spear", new Color32(163, 228, 255, 255), -42);
+            CreateCooldownTile(Spell.Rock, "Stone shot", new Color32(228, 185, 154, 255), 42);
+            CreateCooldownTile(Spell.Wind, "Wind blade", new Color32(207, 182, 255, 255), 126);
+            CreateCooldownTile(Spell.Barrier, "Ward", Mint, 210);
+        }
+
+        private void CreateCooldownTile(Spell spell, string name, Color color, float x)
+        {
+            RectTransform tile = ImageBox(name + " cooldown", cooldowns, 80, CooldownTileHeight, x, 0, Tile).rectTransform;
+            RectTransform path = RectAt(name + " glyph", tile, 44, 44, 0, 9);
+            path.gameObject.AddComponent<CanvasRenderer>();
+            var graphic = path.gameObject.AddComponent<RuneveilGlyphGraphic>();
+            graphic.raycastTarget = false;
+            graphic.SetGlyph(RuneRecognizer.GetGlyph(spell), color);
+            Label(name, tile, name, 14, Paper, 78, 22, 0, -23);
+
+            // 上から下へ縮む影で、残りのクールタイムを示す
+            RectTransform shade = ImageBox("Recharging", tile, 80, 0, 0, CooldownTileHeight * 0.5f,
+                new Color32(20, 14, 26, 210)).rectTransform;
+            shade.pivot = new Vector2(0.5f, 1f);
+            shade.anchoredPosition = new Vector2(0, CooldownTileHeight * 0.5f);
+            cooldownShades[(int)spell] = shade;
+            cooldownTimes[(int)spell] = Label("Seconds left", tile, "", 22, Paper, 78, 30, 0, 9, TextAnchor.MiddleCenter, true);
         }
 
         private void CreateGlyph(Spell spell, string name, Color color, float x, float y)

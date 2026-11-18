@@ -33,9 +33,24 @@ namespace Runeveil
         [SerializeField] RuneveilPinchSettings pinchSettings;
 #if UNITY_EDITOR
         [SerializeField] bool desktopPreviewInEditor;
+        [Header("Debug (Editor only)")]
+        [Tooltip("XR only. Treat the eye gaze as always on the glowing weak point, and accept a short pinch as " +
+            "Start duel / Fight again without looking at the button.")]
+        [SerializeField] bool assumeGazeOnTarget;
 #endif
 
+        struct PendingHit
+        {
+            public Spell Spell;
+            public ArenaTarget Target;
+            public float Delay;
+            public int Part;
+            public bool Focused;
+            public int Level;
+        }
+
         readonly RuneveilDuel duel = new();
+        readonly List<PendingHit> pendingHits = new();
         readonly RuneveilPinchDetector leftPinch = new();
         readonly RuneveilPinchDetector rightPinch = new();
         RuneveilAudio sfx;
@@ -85,13 +100,16 @@ namespace Runeveil
             public readonly ArenaTarget Target;
             public readonly Vector3 Hit;
             public readonly bool Focused;
+            /// <summary>Target が弱点のとき、そのとき光っていた部位番号。それ以外は -1。</summary>
+            public readonly int Part;
 
-            public AimSample(Ray? ray, ArenaTarget target, Vector3 hit, bool focused)
+            public AimSample(Ray? ray, ArenaTarget target, Vector3 hit, bool focused, int part)
             {
                 Ray = ray;
                 Target = target;
                 Hit = hit;
                 Focused = focused;
+                Part = part;
             }
         }
 
@@ -123,6 +141,7 @@ namespace Runeveil
         float strokeFadeUntil;
         string notice;
         float noticeUntil;
+        bool wasEnraged;
         string spellLabel = "";
         string resultSummary = "";
 
@@ -141,6 +160,18 @@ namespace Runeveil
 
         RuneveilPinchSettings Pinch => pinchSettings != null ? pinchSettings : RuneveilPinchSettings.Current;
 
+        bool AssumeGaze
+        {
+            get
+            {
+#if UNITY_EDITOR
+                return usingXr && assumeGazeOnTarget;
+#else
+                return false;
+#endif
+            }
+        }
+
         void LateUpdate()
         {
             bool xrActive = HasXrDisplay();
@@ -149,10 +180,14 @@ namespace Runeveil
             float deltaTime = Mathf.Min(Time.deltaTime, 0.1f);
             bool preview = !usingXr && DesktopPreviewEnabled;
             bool active = usingXr ? OVRManager.hasInputFocus : preview && Application.isFocused;
-            if (active) AdvanceDuel(deltaTime);
+            // ヒットストップ中は拳の溜めやクールタイムも止め、ボスの見た目とずれないようにする
+            if (active && !arena.HitStopping) AdvanceDuel(deltaTime);
+            LandHits(deltaTime);
+            if (duel.Enraged && !wasEnraged) Notify("The Muse is enraged! Her strikes come faster");
+            wasEnraged = duel.Enraged;
             Ray? mousePointer = null;
             Ray? ray = null;
-            if (usingXr) ray = ReadGaze();
+            if (usingXr) ray = AssumeGaze ? AssumedGaze() : ReadGaze();
             else if (preview) ray = MouseAim(out mousePointer);
             Vector3 hit = default;
             var target = ray.HasValue ? arena.Aim(ray.Value, out hit) : ArenaTarget.Miss;
@@ -160,7 +195,8 @@ namespace Runeveil
             bool wasFocused = duel.FocusReady;
             duel.TrackFocus(onCore && duel.Windup >= 0, deltaTime);
             if (Debug.isDebugBuild && usingXr && !wasFocused && duel.FocusReady) focusLocks++;
-            var aim = new AimSample(ray, target, hit, onCore && duel.FocusReady);
+            var aim = new AimSample(ray, target, hit, onCore && duel.FocusReady,
+                target == ArenaTarget.Core ? arena.ActiveWeakPoint : -1);
 
             if (usingXr) UpdateHands(aim);
             else if (preview) UpdateMouse(aim);
@@ -170,16 +206,17 @@ namespace Runeveil
                 pendingDesktopAction = locked = false;
             }
             if (Debug.isDebugBuild) ReportInputs(ray.HasValue);
-            arena.Tick(deltaTime, duel.Windup, duel.Shield, duel.Phase == DuelPhase.Won,
-                onCore, duel.FocusProgress, duel.FocusReady);
+            arena.Tick(deltaTime, duel.Windup, duel.Shield, duel.Phase == DuelPhase.Won, onCore,
+                duel.Stagger > 0, duel.Stuck > 0, duel.Enraged, duel.WeakPoint, duel.FocusProgress, duel.FocusReady);
             arena.SetCharge(chargedSpell, chargeLevel, chargeAnchor, view.transform.position, deltaTime);
             UpdateDrawingFeedback(deltaTime);
 
             string focus = target switch
             {
-                ArenaTarget.Core when duel.FocusReady => "Core exposed",
-                ArenaTarget.Core when duel.FocusProgress > 0 => "Focusing on core",
-                ArenaTarget.Core => locked ? "Core locked" : "Crystal core",
+                ArenaTarget.Core when duel.FocusReady => "Weak point exposed",
+                ArenaTarget.Core when duel.FocusProgress > 0 => "Focusing on weak point",
+                ArenaTarget.Core when AssumeGaze => "Weak point (debug)",
+                ArenaTarget.Core => locked ? "Weak point locked" : "Weak point",
                 ArenaTarget.Body => locked ? "Muse locked" : "Corrupted Muse",
                 _ => usingXr && !ray.HasValue ? "Eye gaze unavailable" : locked ? "Aim locked" : ""
             };
@@ -196,6 +233,8 @@ namespace Runeveil
             hud.SetActionFocus(usingXr ? ray : mousePointer);
             hud.SetHand(handPosition);
             hud.SetPinchMeter(usingXr && Pinch.showDebugMeter, leftPinch, rightPinch, Pinch);
+            for (var spell = Spell.Fire; spell <= Spell.Barrier; spell++)
+                hud.SetCooldown(spell, duel.CooldownLeft(spell), RuneveilDuel.CooldownSeconds(spell));
             if (drawing) hud.ShowStroke(points, chargedSpell.HasValue ? ChargeColor(chargedSpell.Value) : DrawingColor);
             else if (strokeFadeUntil > 0)
             {
@@ -269,7 +308,7 @@ namespace Runeveil
 
             bool blocked = impact == AttackResult.Blocked;
             arena.Impact(blocked);
-            if (blocked) Notify("Your ward blocked the strike");
+            if (blocked) Notify("Your ward blocked the strike. The paw is stuck");
             else if (duel.Phase == DuelPhase.Lost) ShowResult("Defeated");
             else if (duel.Phase == DuelPhase.Battle) Notify("The Muse's strike hit you");
         }
@@ -280,14 +319,20 @@ namespace Runeveil
             if (duel.Finished) return resultSummary;
             if (usingXr && !string.IsNullOrEmpty(gazeHint)) return gazeHint;
             if (usingXr && !handPosition.HasValue) return "Bring a hand into view, then pinch";
-            if (duel.FocusReady) return "Core exposed! Release an attack rune at the crystal";
+            if (duel.Stagger > 0) return $"The Muse is down! Weak point damage x{RuneveilDuel.ExposedCoreMultiplier}";
+            if (duel.Stuck > 0) return "Her paw is stuck. Counterattack now";
+            if (duel.FocusReady) return "Weak point exposed! Release an attack rune at the crystal";
+            if (duel.Windup >= 0)
+                return "Hold your gaze on the glowing crystal, interrupt with Lightning, or ward just before it lands";
             if (chargedSpell.HasValue && !drawing)
                 return chargedSpell == Spell.Barrier
                     ? (usingXr ? "Ward charged — pinch and release to raise it" : "Ward charged — click to raise it")
                     : $"{ChargeName(chargedSpell.Value)} charged — " +
                       (usingXr ? "look at a target, pinch and release" : "click to cast");
-            if (duel.Windup >= 0) return "Hold your gaze on the crystal, interrupt with Lightning, or draw a Ward";
-            if (duel.Phase == DuelPhase.Battle) return "Aim for the crystal core";
+            if (duel.Phase == DuelPhase.Battle)
+                return duel.WeakPoint < 0
+                    ? "The weak point shattered. Watch for the next glow"
+                    : $"Aim for the glowing crystal on the {RuneveilArena.WeakPointNames[duel.WeakPoint]}";
             return "";
         }
 
@@ -306,11 +351,22 @@ namespace Runeveil
         void StartBattle()
         {
             ClearStroke();
+            pendingHits.Clear();
             duel.StartBattle();
             arena.ResetArena();
             spellLabel = "";
             resultSummary = "";
             Notify("Duel started");
+        }
+
+        /// <summary>エディター専用のデバッグ用。視線が取れなくても、頭の位置から光っている弱点を見ている扱いにする。</summary>
+        Ray? AssumedGaze()
+        {
+            gazeHint = null;
+            if (!OVRManager.hasInputFocus) return null;
+
+            Vector3 eye = view.transform.position;
+            return new Ray(eye, arena.WeakPointPosition(arena.ActiveWeakPoint) - eye);
         }
 
         Ray? ReadGaze()
@@ -693,6 +749,8 @@ namespace Runeveil
                     levelUp = true;
                 }
             }
+            // クールタイム中の魔法は新しく溜めない（溜まった表示なのに撃てない状態を作らない）
+            if (match.HasValue && !levelUp && duel.CooldownLeft(match.Value) > 0) match = null;
 
             int key = match.HasValue ? (int)match.Value * 2 + (levelUp ? 1 : 0) : -1;
             if (key != pendingKey)
@@ -739,7 +797,9 @@ namespace Runeveil
             var settings = Pinch;
             bool shortPinch = usingXr && Time.unscaledTime - strokeStarted <= settings.tapMaxDuration &&
                 maxDisplacementSquared <= settings.tapMaxMovement * settings.tapMaxMovement;
-            if (!recognized.HasValue && shortPinch && aim.Ray.HasValue && hud.ActionHit(aim.Ray.Value))
+            // デバッグ時はボタンが出ていれば、見ていなくても押したことにする
+            bool onAction = AssumeGaze ? duel.Phase != DuelPhase.Battle : aim.Ray.HasValue && hud.ActionHit(aim.Ray.Value);
+            if (!recognized.HasValue && shortPinch && onAction)
             {
                 StartBattle();
                 return;
@@ -758,13 +818,22 @@ namespace Runeveil
                 Notify("Rune unclear. Try the shape again");
                 return;
             }
+            string label = spell == Spell.Barrier ? "Ward" : spell.Value.ToString();
+            // 決着後に残った溜めを放つときは見た目だけ出すので、クールタイムは見ない
+            if (!duel.Finished && !duel.TryCast(spell.Value))
+            {
+                RecordCast(spell, ArenaTarget.Miss, "recharging");
+                Notify($"{label} is recharging ({duel.CooldownLeft(spell.Value):0.0}s)");
+                return;
+            }
             if (spell != Spell.Barrier && !aim.Ray.HasValue)
             {
                 // No verified eye gaze: still cast. Aim along the raw eye ray if there is one, otherwise
                 // where the head faces. Focus bonuses still need verified gaze, so none applies here.
                 Ray fallback = (usingXr ? unverifiedGaze : null) ?? new Ray(view.transform.position, view.transform.forward);
                 var fallbackTarget = arena.Aim(fallback, out Vector3 fallbackHit);
-                aim = new AimSample(fallback, fallbackTarget, fallbackHit, false);
+                aim = new AimSample(fallback, fallbackTarget, fallbackHit, false,
+                    fallbackTarget == ArenaTarget.Core ? arena.ActiveWeakPoint : -1);
                 RecordCast(spell, fallbackTarget, "fallback-aim");
             }
 
@@ -777,32 +846,71 @@ namespace Runeveil
             }
             var target = spell == Spell.Barrier ? ArenaTarget.Miss : aim.Target;
             Vector3 hit = spell == Spell.Barrier ? point : aim.Hit;
-            if (duel.Finished)
+            // ボスを外したときも胴体に当てる（ダメージは減る）
+            if (spell != Spell.Barrier && target == ArenaTarget.Miss)
             {
-                float flight = arena.Cast(spell.Value, point, hit, ArenaTarget.Miss, view.transform.position,
-                    view.transform.forward, level);
-                sfx.PlayCast(spell.Value, point, Pinch, level);
-                sfx.PlayImpact(spell.Value, level, hit, flight, Pinch);
+                target = ArenaTarget.Body;
+                hit = arena.BodyPoint(view.transform.position);
+            }
+            float travel = arena.Cast(spell.Value, point, hit, view.transform.position, view.transform.forward, level);
+            sfx.PlayCast(spell.Value, point, Pinch, level);
+            sfx.PlayImpact(spell.Value, level, hit, travel, Pinch);
+            if (duel.Finished) return;
+            spellLabel = label + (level > 1 ? $" Lv{level}" : "");
+            if (spell == Spell.Barrier)
+            {
+                RecordCast(spell, ArenaTarget.Miss, "Shield");
+                Notify($"Ward up for {RuneveilDuel.ShieldSeconds:0.#}s");
                 return;
             }
-            var cast = duel.Cast(spell.Value, target, aim.Focused, level);
-            RecordCast(spell, target, cast.ToString());
-            float flightTime = arena.Cast(spell.Value, point, hit, target, view.transform.position,
-                view.transform.forward, level);
-            sfx.PlayCast(spell.Value, point, Pinch, level);
-            sfx.PlayImpact(spell.Value, level, hit, flightTime, Pinch);
-            string spellName = spell == Spell.Barrier ? "Ward" : spell.Value.ToString();
-            spellLabel = spellName + (level > 1 ? $" Lv{level}" : "");
-            string power = level > 1 ? $"Lv{level} {spellName}! " : "";
-            if (duel.Phase == DuelPhase.Won) ShowResult("Victory");
-            else Notify(cast switch
+            pendingHits.Add(new PendingHit
             {
-                CastResult.Interrupt => power + "Lightning interrupted the strike",
-                CastResult.FocusHit => power + "Focused strike! The exposed crystal took extra damage",
-                CastResult.Shield => "Ward ready for the next strike",
-                CastResult.Miss => "The spell missed",
-                _ => power + (target == ArenaTarget.Core ? "Crystal core hit" : "Muse hit")
+                Spell = spell.Value,
+                Target = target,
+                Delay = travel,
+                Part = target == ArenaTarget.Core ? aim.Part : -1,
+                Focused = aim.Focused,
+                Level = level
             });
+        }
+
+        /// <summary>飛んでいる攻撃魔法の着弾を待ち、着弾した瞬間にダメージと手応えを出す。</summary>
+        void LandHits(float deltaTime)
+        {
+            // 弾の移動と同じ上限で時間を進め、見た目の着弾と判定をそろえる
+            float step = Mathf.Min(deltaTime, 0.05f);
+            for (int i = pendingHits.Count - 1; i >= 0; i--)
+            {
+                var pending = pendingHits[i];
+                pending.Delay -= step;
+                if (pending.Delay > 0)
+                {
+                    pendingHits[i] = pending;
+                    continue;
+                }
+
+                pendingHits.RemoveAt(i);
+                var result = duel.Hit(pending.Spell, pending.Target, pending.Part, pending.Focused, pending.Level);
+                if (result == CastResult.None) continue;
+
+                RecordCast(pending.Spell, pending.Target, result.ToString());
+                bool won = duel.Phase == DuelPhase.Won;
+                arena.Hit(pending.Spell, pending.Target,
+                    result == CastResult.Interrupt || result == CastResult.Exposed || result == CastResult.FocusHit, won,
+                    pending.Level);
+                string power = pending.Level > 1 ? $"Lv{pending.Level} {pending.Spell}! " : "";
+                if (won) ShowResult("Victory");
+                else Notify(result switch
+                {
+                    CastResult.Interrupt => power + "Lightning stopped her strike. The Muse is down",
+                    CastResult.Exposed => power + $"Exposed weak point! x{RuneveilDuel.ExposedCoreMultiplier} damage",
+                    CastResult.FocusHit => power + "Focused strike! The exposed crystal took extra damage",
+                    CastResult.Miss => "The spell missed",
+                    _ => power + (pending.Target == ArenaTarget.Core
+                        ? "Weak point shattered!"
+                        : "Glancing hit. Look at the glowing crystal for more damage")
+                });
+            }
         }
 
         void CancelTrackingStroke()

@@ -10,7 +10,7 @@ namespace Runeveil
         private const float MuseAtlasSize = 1254f;
         private const float MuseScale = 0.00340f;
         private Transform thornWind;
-        private HitVolume coreVolume;
+        private MeshRenderer thornRenderer;
         public Transform MuseEyes { get; private set; }
 
         private static Vector3 MusePoint(Vector2 pixel, float depth = 0f) =>
@@ -76,6 +76,10 @@ namespace Runeveil
             BuildMuseGem();
             attackArm = BuildMuseArm(plush, paw, 1);
             anchorArm = BuildMuseArm(plush, paw, -1);
+            // 胸以外の弱点は額と両方の拳に小さな結晶として付ける。拳の結晶は拳と一緒に動く
+            AddWeakGem(1, boss, "Brow crystal", MusePoint(new(628, 292), -0.90f), 0.7f);
+            AddWeakGem(2, anchorArm.Fist, "Resting paw crystal", new Vector3(0f, 0f, -0.39f), 0.7f);
+            AddWeakGem(3, attackArm.Fist, "Raised paw crystal", new Vector3(0f, 0.02f, -0.47f), 0.7f);
             BuildThornWind(arenaShader);
 
             var warning = new Geometry("Amber arc on Muse's raised paw");
@@ -84,29 +88,27 @@ namespace Runeveil
             warningArcs = Render(boss, warning, glow).transform;
         }
 
-        private void PoseMuse(bool rising, bool coreAimed, float charge, float thrust)
+        private void PoseMuse(bool rising, float thrust)
         {
+            // ダウン中は倒れたときと同じ向きに腕を落とす（倒れたときほどは落とさない）
+            float sag = defeat + down * 0.6f;
             attackArm.Pose(new Vector3(1.20f + lift * 0.14f - thrust * 0.04f,
-                    2.20f + lift * 0.30f - thrust * 0.53f - defeat * 0.38f, -0.03f - thrust * 0.57f),
+                    2.20f + lift * 0.30f - thrust * 0.53f - sag * 0.38f, -0.03f - thrust * 0.57f),
                 new Vector3(1.49f + lift * 0.11f - thrust * 0.30f,
-                    2.78f + lift * 0.59f - thrust * 1.49f - defeat * 1.43f, -0.43f - lift * 0.08f - thrust * 0.68f),
+                    2.78f + lift * 0.59f - thrust * 1.49f - sag * 1.43f, -0.43f - lift * 0.08f - thrust * 0.68f),
                 new Vector3(6f + 9f * lift - 48f * thrust, -8.5f - thrust * 11f, -12f + 4f * lift + 25f * thrust));
             anchorArm.Pose(new Vector3(-1.11f, 1.39f + lift * 0.07f, -0.12f - lift * 0.06f),
-                new Vector3(-1.34f - lift * 0.04f, 1.19f + lift * 0.08f + defeat * 0.15f, -0.61f - lift * 0.06f),
-                new Vector3(0f + 6f * lift, 11f - 16f * defeat, -12f));
+                new Vector3(-1.34f - lift * 0.04f, 1.19f + lift * 0.08f + sag * 0.15f, -0.61f - lift * 0.06f),
+                new Vector3(0f + 6f * lift, 11f - 16f * sag, -12f));
 
             warningArcs.gameObject.SetActive(rising && defeat < 0.13f);
             warningArcs.localPosition = attackArm.Fist.localPosition + Vector3.back * 0.30f;
             warningArcs.localRotation = Quaternion.Euler(0f, 10f, 17f + 24f * lift);
-            thornWind.localRotation = Quaternion.Euler(0f, 11f * Mathf.Sin(age * 0.72f) + lift * 13f, 2f * Mathf.Sin(age));
+            // 怒り状態では棘の帯を赤く染め、大きく揺らす
+            thornWind.localRotation = Quaternion.Euler(0f, (11f + 10f * rage) * Mathf.Sin(age * 0.72f) + lift * 13f,
+                (2f + 3f * rage) * Mathf.Sin(age));
             thornWind.localPosition = Vector3.up * (0.061f * Mathf.Sin(age * 1.7f) + lift * 0.07f);
-
-            float pulse = 0.5f + 0.5f * Mathf.Sin(age * 3.8f);
-            Color tint = Color.Lerp(Color.white, Rgb(0xffc1e5), 0.32f + (rising ? 0.38f * charge : 0.09f * pulse));
-            Tint(coreRenderer, tint * Mathf.Lerp(1f, 0.36f, defeat), 1f);
-            Tint(coreLight, Rgb(0xff6fb1), (0.13f + 0.08f * pulse + (rising ? 0.19f : 0f) +
-                (coreAimed ? 0.09f : 0f)) * (1f - defeat));
-            coreLight.transform.localScale = new Vector3(0.64f, 0.81f, 1f) * (1f + pulse * 0.09f + 0.11f * lift);
+            Tint(thornRenderer, Color.Lerp(Color.white, Rgb(0xff4a4a), rage), 1f);
         }
 
         private void BuildMuseLeg(Material plush, int side)
@@ -145,8 +147,28 @@ namespace Runeveil
         {
             Core = Group(boss, "Pink chest crystal");
             Core.localPosition = MusePoint(new(632, 783), -0.822f);
-            coreVolume = new HitVolume(Core, Vector3.back * 0.024f, new(0.151f, 0.264f, 0.151f), Quaternion.identity);
-            var gem = new Geometry("Faceted rose crystal");
+            weakAnchors[0] = Core;
+            weakVolumes[0] = new HitVolume(Core, Vector3.back * 0.024f, new(0.151f, 0.264f, 0.151f), Quaternion.identity);
+            weakGems[0] = Render(Core, MuseGemGeometry("Faceted rose crystal", 1f), vivid);
+            weakHalos[0] = Render(Core, "Pink crystal radiance", softDisc, softGlow);
+            weakHalos[0].transform.localPosition = Vector3.back * 0.10f;
+        }
+
+        private void AddWeakGem(int index, Transform parent, string label, Vector3 localPosition, float scale)
+        {
+            Transform anchor = Group(parent, label);
+            anchor.localPosition = localPosition;
+            weakAnchors[index] = anchor;
+            // 小さい結晶でも狙えるよう、判定は見た目より一回り大きく取る
+            weakVolumes[index] = new HitVolume(anchor, Vector3.back * 0.02f, new(0.17f, 0.21f, 0.17f), Quaternion.identity);
+            weakGems[index] = Render(anchor, MuseGemGeometry(label, scale), vivid);
+            weakHalos[index] = Render(anchor, label + " radiance", softDisc, softGlow);
+            weakHalos[index].transform.localPosition = Vector3.back * 0.08f;
+        }
+
+        private static Geometry MuseGemGeometry(string label, float scale)
+        {
+            var gem = new Geometry(label);
             var boundary = new Vector3[] {
                 new(0, 0.251f, 0.02f), new(0.128f, 0.081f, 0.012f), new(0.128f, -0.106f, 0.013f),
                 new(0.013f, -0.243f, 0.018f), new(-0.127f, -0.1f, 0.013f), new(-0.127f, 0.075f, 0.012f)
@@ -156,17 +178,16 @@ namespace Runeveil
                 new(0.002f, -0.134f, -0.112f), new(-0.068f, -0.065f, -0.102f), new(-0.068f, 0.048f, -0.097f)
             };
             int[] facetColors = { 0xffa2d6, 0xef4e9b, 0xff8fc4, 0xf37cbb, 0xff61a0, 0xffe1f3 };
+            Vector3 tip = new Vector3(0f, -0.009f, -0.122f) * scale;
             for (int i = 0; i < boundary.Length; i++)
             {
                 int next = (i + 1) % boundary.Length;
-                gem.Quad(boundary[i], boundary[next], crown[next], crown[i], facetColors[i]);
-                gem.Quad(crown[i], crown[next], new(0f, -0.009f, -0.122f), new(0f, -0.009f, -0.122f), 0xf72b85);
-                gem.Tube(new[] { boundary[i] + Vector3.back * 0.002f, boundary[next] + Vector3.back * 0.002f },
-                    0.003f, 0xffc5e5, 4);
+                gem.Quad(boundary[i] * scale, boundary[next] * scale, crown[next] * scale, crown[i] * scale, facetColors[i]);
+                gem.Quad(crown[i] * scale, crown[next] * scale, tip, tip, 0xf72b85);
+                gem.Tube(new[] { (boundary[i] + Vector3.back * 0.002f) * scale, (boundary[next] + Vector3.back * 0.002f) * scale },
+                    0.003f * scale, 0xffc5e5, 4);
             }
-            coreRenderer = Render(Core, gem, vivid);
-            coreLight = Render(Core, "Pink crystal radiance", softDisc, softGlow);
-            coreLight.transform.localPosition = Vector3.back * 0.10f;
+            return gem;
         }
 
         private Arm BuildMuseArm(Material plush, Material paw, int side)
@@ -331,7 +352,7 @@ namespace Runeveil
                 ribbons.Profile(center, new(0.082f, 0.141f, 0.069f), Quaternion.Euler(i * 21f, i * 29f, -16f * i),
                     i % 3 == 0 ? 0xb43a7e : 0x7e3263, Geometry.GemProfile, 5);
             }
-            Render(thornWind, ribbons, streak);
+            thornRenderer = Render(thornWind, ribbons, streak);
         }
 
         private static int ColorInt(Color color)
