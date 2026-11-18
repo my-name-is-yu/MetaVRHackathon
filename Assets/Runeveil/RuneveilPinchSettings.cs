@@ -86,6 +86,12 @@ namespace Runeveil
         [Tooltip("Explosion where the spell lands.")]
         [Range(0f, 1f)] public float impactVolume = 1f;
 
+        [Header("Music")]
+        [Tooltip("Background music volume (ruins theme, boss theme).")]
+        [Range(0f, 1f)] public float musicVolume = 0.45f;
+        [Tooltip("Victory fanfare volume, relative to the music volume.")]
+        [Range(0f, 1.5f)] public float jingleVolume = 1.2f;
+
         [Header("Drawing sparks")]
         public bool sparks = true;
         [Tooltip("Spark amount multiplier. More sparks appear when the fingertip moves faster.")]
